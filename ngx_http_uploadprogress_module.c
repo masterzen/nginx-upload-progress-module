@@ -7,13 +7,18 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
-typedef struct {
-    u_char              color;
+typedef struct ngx_http_uploadprogress_node_s ngx_http_uploadprogress_node_t;
+
+struct ngx_http_uploadprogress_node_s {
+		ngx_rbtree_node_t   node;
  		ngx_http_request_t *r;
+		ngx_uint_t					err_status;
+		time_t							timeout;
+    struct ngx_http_uploadprogress_node_s  *prev;
+    struct ngx_http_uploadprogress_node_s  *next;
     u_char              len;
     u_char              data[1];
-} ngx_http_uploadprogress_node_t;
-
+};
 
 typedef struct {
     ngx_shm_zone_t     *shm_zone;
@@ -22,14 +27,16 @@ typedef struct {
 
 typedef struct {
     ngx_rbtree_t       *rbtree;
+    ngx_http_uploadprogress_node_t   list_head;
+    ngx_http_uploadprogress_node_t   list_tail;
 } ngx_http_uploadprogress_ctx_t;
 
 typedef struct {
     ngx_shm_zone_t     *shm_zone;
 		u_char							track;
+		ngx_event_t					cleanup;
 } ngx_http_uploadprogress_conf_t;
 
-static ngx_int_t ngx_http_reportuploads_handler(ngx_http_request_t *r);
 static ngx_int_t ngx_http_reportuploads_handler(ngx_http_request_t *r);
 static void ngx_http_uploadprogress_cleanup(void *data);
 static char *ngx_http_report_uploads(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
@@ -40,6 +47,9 @@ static char *ngx_http_uploadprogress_merge_loc_conf(ngx_conf_t *cf, void *parent
 static char *ngx_http_track_uploads(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char *ngx_http_report_uploads(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char *ngx_http_upload_progress(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static void ngx_clean_old_connections(ngx_event_t *ev);
+
+static ngx_http_output_header_filter_pt  ngx_http_next_header_filter;
 
 static ngx_command_t  ngx_http_uploadprogress_commands[] = {
 
@@ -155,6 +165,57 @@ get_tracking_id(ngx_http_request_t *r)
 	return NULL;
 }
 
+static ngx_http_uploadprogress_node_t*
+find_node(ngx_str_t *id, ngx_http_uploadprogress_ctx_t *ctx, ngx_log_t *log)
+{
+  uint32_t                        hash;
+  ngx_rbtree_node_t              *node, *sentinel;
+	ngx_int_t                       rc;
+	ngx_http_uploadprogress_node_t *up;
+	
+  ngx_log_debug1(NGX_LOG_DEBUG_HTTP, log, 0,
+                 "upload-progress: find_node %V", id);	
+	
+	hash = ngx_crc32_short(id->data, id->len);
+	
+  node = ctx->rbtree->root;
+  sentinel = ctx->rbtree->sentinel;
+
+  while (node != sentinel) {
+
+      if (hash < node->key) {
+          node = node->left;
+          continue;
+      }
+
+      if (hash > node->key) {
+          node = node->right;
+          continue;
+      }
+
+      /* hash == node->key */
+
+      do {
+          up = (ngx_http_uploadprogress_node_t *) node;
+
+          rc = ngx_memn2cmp(id->data, up->data, id->len, (size_t) up->len);
+
+          if (rc == 0) {
+					  	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0,
+					                 "upload-progress: found node");	
+              return up;
+          }
+
+          node = (rc < 0) ? node->left : node->right;
+
+      } while (node != sentinel && hash == node->key);
+
+      break;
+  }
+	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0,
+               "upload-progress: can't find node");	
+	return NULL;
+}
 
 /* This generates the response for the report */
 static ngx_int_t
@@ -164,13 +225,12 @@ ngx_http_reportuploads_handler(ngx_http_request_t *r)
   ngx_buf_t    *b;
   ngx_chain_t   out;
 	ngx_http_request_t								 *orig;
-  ngx_int_t                       rc, size;
-  uint32_t                        hash;
+	ngx_int_t                       rc, size; 
+		ngx_uint_t										len, i;
   ngx_slab_pool_t                *shpool;
-  ngx_rbtree_node_t              *node, *sentinel;
-	ngx_http_uploadprogress_conf_t     *lzcf;
+	ngx_http_uploadprogress_conf_t     *upcf;
   ngx_http_uploadprogress_ctx_t      *ctx;
-  ngx_http_uploadprogress_node_t     *lz;
+  ngx_http_uploadprogress_node_t     *up;
   ngx_table_elt_t  *expires, *cc, **ccp;
 
   if (r->method != NGX_HTTP_GET && r->method != NGX_HTTP_HEAD) {
@@ -197,90 +257,41 @@ ngx_http_reportuploads_handler(ngx_http_request_t *r)
   ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                  "reportuploads handler found id: %V", id);
 
-  lzcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
+  upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
 
-  if (lzcf->shm_zone == NULL) {
+  if (upcf->shm_zone == NULL) {
 	  	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 	                 "reportuploads no shm_zone for id: %V", id);
       return NGX_DECLINED;
   }
 
 	orig = NULL;
-  ctx = lzcf->shm_zone->data;
-	
-  hash = ngx_crc32_short(id->data, id->len);
-
-	ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-               "reportuploads trying to find block with hash %08XD for id: %V", hash, id);
+  ctx = upcf->shm_zone->data;
 
 	/* get the original connection of the upload */
-  shpool = (ngx_slab_pool_t *) lzcf->shm_zone->shm.addr;
-  ngx_shmtx_lock(&shpool->mutex);
+  shpool = (ngx_slab_pool_t *) upcf->shm_zone->shm.addr;
 
-	ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-               "reportuploads in mutex lock for hash %08XD for id: %V", hash, id);
+	ngx_shmtx_lock(&shpool->mutex);
 
-  node = ctx->rbtree->root;
-  sentinel = ctx->rbtree->sentinel;
-
-	ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-               "reportuploads root %p, sentinel %p for id: %V", node,sentinel, id);
-
-  while (node != sentinel) {
-
-      if (hash < node->key) {
-          node = node->left;
-          continue;
-      }
-
-      if (hash > node->key) {
-          node = node->right;
-          continue;
-      }
-
-			ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-		               "reportuploads found matching hash %08XD, node %p for id: %V", hash, node, id);
-
-      /* hash == node->key */
-
-      do {
-          lz = (ngx_http_uploadprogress_node_t *) &node->color;
-
-          rc = ngx_memn2cmp(id->data, lz->data, id->len, (size_t) lz->len);
-
-          if (rc == 0) {
-						/* found the right one */
-						/* lz contains the right node*/
-						ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-					               "reportuploads found request: %p", lz->r);
-						orig = lz->r;
-						goto found;
-          }
-
-					ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-				               "reportuploads oops not the same : lz %V != id %V", lz, id);
-
-
-          node = (rc < 0) ? node->left : node->right;
-
-      } while (node != sentinel && hash == node->key);
-
-			lz = NULL;
-			
-			/* couldn't find one */
-			ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-		               "reportuploads not matching request");
-  }
-
-found:
+ 	up = find_node(id, ctx, r->connection->log);
+  if (up != NULL)
+  {
+	  ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+	                 "reportuploads found node: %V", id);
+		orig = up->r;
+	}
+	else
+	{
+	  ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+	                 "reportuploads not found: %V", id);		
+	}
 	ngx_shmtx_unlock(&shpool->mutex);
 
 	/* send the output */
   r->headers_out.content_type.len = sizeof("text/javascript") - 1;
   r->headers_out.content_type.data = (u_char *) "text/javascript";
 
-	/* no-cache */
-
+	/* force no-cache */
   expires = r->headers_out.expires;
 
   if (expires == NULL) {
@@ -352,16 +363,20 @@ found:
 
 	if ( orig == NULL )
 	{
-		if (lz != NULL )
+		if (up != NULL && up->err_status != NGX_HTTP_REQUEST_ENTITY_TOO_LARGE )
 		{
 			size = sizeof("new Object({ 'state' : 'done' })\r\n");
   	}
+		else if ( up != NULL && up->err_status == NGX_HTTP_REQUEST_ENTITY_TOO_LARGE )
+		{
+			size = sizeof("new Object({ 'state' : 'error', 'status' : 413 })\r\n");			
+		}
 		else
 		{
 			size = sizeof("new Object({ 'state' : 'starting' })\r\n");
   	}
 	}
-	else if ( orig->err_status == 413)
+	else if ( orig->err_status == NGX_HTTP_REQUEST_ENTITY_TOO_LARGE )
 	{
 		size = sizeof("new Object({ 'state' : 'error', 'status' : 413 })\r\n");
 	}
@@ -381,12 +396,19 @@ found:
 	
 	if (orig == NULL)
 	{
-		if (lz == NULL )
+		if (up == NULL )
 		{
 			b->last = ngx_cpymem(b->last, "new Object({ 'state' : 'starting' })\r\n",
 		                       sizeof("new Object({ 'state' : 'starting' })\r\n") - 1);
 			ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 											               "reportuploads returning starting");
+		}
+		else if ( up != NULL && up->err_status == NGX_HTTP_REQUEST_ENTITY_TOO_LARGE )
+		{
+			b->last = ngx_cpymem(b->last, "new Object({ 'state' : 'error', 'status' : 413 })\r\n",
+		                       sizeof("new Object({ 'state' : 'error', 'status' : 413 })\r\n") - 1);
+			ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+		               "reportuploads returning error 413");			
 		}
 		else 
 		{
@@ -396,7 +418,7 @@ found:
 		               "reportuploads returning done");
 		}
 	}
-	else if ( orig->err_status == 413)
+	else if ( orig->err_status == NGX_HTTP_REQUEST_ENTITY_TOO_LARGE)
 	{
 		b->last = ngx_cpymem(b->last, "new Object({ 'state' : 'error', 'status' : 413 })\r\n",
 	                       sizeof("new Object({ 'state' : 'error', 'status' : 413 })\r\n") - 1);
@@ -415,9 +437,6 @@ found:
 
 	}
 
-	// force no caching for proxy
-	
-
 	r->headers_out.status = NGX_HTTP_OK;
 	r->headers_out.content_length_n = b->last - b->pos;
 
@@ -432,22 +451,26 @@ found:
 }
 
 /* 
-This is the post read phase. It registers the upload connection in the rb tree
+Let's register the upload connection in our connections rb-tree
 */
 static ngx_int_t
 ngx_http_uploadprogress_handler(ngx_http_request_t *r)
 {
   size_t                          n;
 	ngx_str_t 												 *id;
-  ngx_int_t                       rc;
   uint32_t                        hash;
   ngx_slab_pool_t                *shpool;
-  ngx_rbtree_node_t              *node, *sentinel;
-	ngx_http_uploadprogress_conf_t     *lzcf;
+  ngx_rbtree_node_t              *node;
+	ngx_http_uploadprogress_conf_t     *upcf;
   ngx_http_uploadprogress_ctx_t      *ctx;
-  ngx_http_uploadprogress_node_t     *lz;
-	ngx_http_uploadprogress_cleanup_t	 *lzcln;
+  ngx_http_uploadprogress_node_t     *up;
+	ngx_http_uploadprogress_cleanup_t	 *upcln;
   ngx_pool_cleanup_t             *cln;
+
+	/* Is it a POST connection */
+	if (r->method != NGX_HTTP_POST) {
+		return NGX_DECLINED;
+	}
 
 	id = get_tracking_id(r);
 	if ( id == NULL )
@@ -460,76 +483,48 @@ ngx_http_uploadprogress_handler(ngx_http_request_t *r)
 	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
            "trackuploads id found: %V", id);
 
-  lzcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
+  upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
 
-  if (!lzcf->track) {
+  if (!upcf->track) {
 	  	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 	                 "trackuploads not tracking in this location for id: %V", id);
       return NGX_DECLINED;
   }
 
-  if (lzcf->shm_zone == NULL) {
+  if (upcf->shm_zone == NULL) {
   	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                  "trackuploads no shm_zone for id: %V", id);
       return NGX_DECLINED;
   }
 
-  ctx = lzcf->shm_zone->data;
+  ctx = upcf->shm_zone->data;
 	
   hash = ngx_crc32_short(id->data, id->len);
 
 	ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                "trackuploads hash %08XD for id: %V",hash, id);
 
-  cln = ngx_pool_cleanup_add(r->pool, sizeof(ngx_http_uploadprogress_cleanup_t));
-  if (cln == NULL) {
-      return NGX_HTTP_INTERNAL_SERVER_ERROR;
-  }
-
-  shpool = (ngx_slab_pool_t *) lzcf->shm_zone->shm.addr;
+  shpool = (ngx_slab_pool_t *) upcf->shm_zone->shm.addr;
 
   ngx_shmtx_lock(&shpool->mutex);
 
-  node = ctx->rbtree->root;
-  sentinel = ctx->rbtree->sentinel;
+	if ( find_node(id, ctx, r->connection->log) != NULL )
+	{
+  	ngx_shmtx_unlock(&shpool->mutex);
+		/* already found a node with matching progress ID */
+		ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                  "upload_progress: tracking already registered id: %V", id);
+    
+		return NGX_HTTP_INTERNAL_SERVER_ERROR;
+	}
 
-  while (node != sentinel) {
-
-      if (hash < node->key) {
-          node = node->left;
-          continue;
-      }
-
-      if (hash > node->key) {
-          node = node->right;
-          continue;
-      }
-
-      /* hash == node->key */
-
-      do {
-          lz = (ngx_http_uploadprogress_node_t *) &node->color;
-
-          rc = ngx_memn2cmp(id->data, lz->data, id->len, (size_t) lz->len);
-
-          if (rc == 0) {
-							ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-					               "trackuploads already registered: %V",id);
-							/* oops found already one */
-              ngx_shmtx_unlock(&shpool->mutex);
-
-              return NGX_HTTP_SERVICE_UNAVAILABLE;
-          }
-
-          node = (rc < 0) ? node->left : node->right;
-
-      } while (node != sentinel && hash == node->key);
-
-      break;
+  cln = ngx_pool_cleanup_add(r->pool, sizeof(ngx_http_uploadprogress_cleanup_t));
+  if (cln == NULL) {
+    	ngx_shmtx_unlock(&shpool->mutex);
+      return NGX_HTTP_INTERNAL_SERVER_ERROR;
   }
 
-  n = offsetof(ngx_rbtree_node_t, color)
-      + offsetof(ngx_http_uploadprogress_node_t, data)
+  n = sizeof(ngx_http_uploadprogress_node_t)
       + id->len;
 
   node = ngx_slab_alloc_locked(shpool, n);
@@ -538,24 +533,40 @@ ngx_http_uploadprogress_handler(ngx_http_request_t *r)
       return NGX_HTTP_SERVICE_UNAVAILABLE;
   }
 
-  lz = (ngx_http_uploadprogress_node_t *) &node->color;
+  up = (ngx_http_uploadprogress_node_t *)node;
 
   node->key = hash;
-  lz->len = (u_char) id->len;
-	lz->r = r;
-  ngx_memcpy(lz->data, id->data, id->len);
+  up->len = (u_char) id->len;
+	up->r = r;
+	up->err_status = r->err_status;
+	
+  up->next = ctx->list_head.next;
+	up->next->prev = up;
+  up->prev = &ctx->list_head;
+  ctx->list_head.next = up;
+		
+  ngx_memcpy(up->data, id->data, id->len);
 
   ngx_rbtree_insert(ctx->rbtree, node);
   ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                 "trackuploads: %08XD", node->key);
+                 "trackuploads: %08XD inserted in rbtree", node->key);
 
   ngx_shmtx_unlock(&shpool->mutex);
 
   cln->handler = ngx_http_uploadprogress_cleanup;
-  lzcln = cln->data;
+  upcln = cln->data;
 
-  lzcln->shm_zone = lzcf->shm_zone;
-  lzcln->node = node;
+  upcln->shm_zone = upcf->shm_zone;
+  upcln->node = node;
+
+	/* start the timer if needed */
+	if ( !upcf->cleanup.timer_set)
+	{
+		upcf->cleanup.data = upcf->shm_zone;
+		upcf->cleanup.handler = ngx_clean_old_connections;
+		upcf->cleanup.log = r->connection->log;
+		ngx_add_timer(&upcf->cleanup, 60 * 1000);
+	}
 
   return NGX_DECLINED;
 }
@@ -564,7 +575,7 @@ static void
 ngx_http_uploadprogress_rbtree_insert_value(ngx_rbtree_node_t *temp,
     ngx_rbtree_node_t *node, ngx_rbtree_node_t *sentinel)
 {
-    ngx_http_uploadprogress_node_t  *lzn, *lznt;
+    ngx_http_uploadprogress_node_t  *upn, *upnt;
 
     for ( ;; ) {
 
@@ -588,10 +599,10 @@ ngx_http_uploadprogress_rbtree_insert_value(ngx_rbtree_node_t *temp,
 
         } else { /* node->key == temp->key */
 
-            lzn = (ngx_http_uploadprogress_node_t *) &node->color;
-            lznt = (ngx_http_uploadprogress_node_t *) &temp->color;
+            upn = (ngx_http_uploadprogress_node_t *) node;
+            upnt = (ngx_http_uploadprogress_node_t *) temp;
 
-            if (ngx_memn2cmp(lzn->data, lznt->data, lzn->len, lznt->len) < 0) {
+            if (ngx_memn2cmp(upn->data, upnt->data, upn->len, upnt->len) < 0) {
 
                 if (temp->left == sentinel) {
                     temp->left = node;
@@ -618,37 +629,89 @@ ngx_http_uploadprogress_rbtree_insert_value(ngx_rbtree_node_t *temp,
     ngx_rbt_red(node);
 }
 
+
+static void
+ngx_clean_old_connections(ngx_event_t *ev)
+{
+  ngx_shm_zone_t             *shm_zone;
+  ngx_http_uploadprogress_ctx_t  *ctx;
+  ngx_slab_pool_t                *shpool;
+  ngx_rbtree_node_t              *node;
+	ngx_http_uploadprogress_node_t	*up;
+	time_t	now = ngx_time();
+
+	
+	/* scan the rbtree */
+	shm_zone = ev->data; 
+	ctx = shm_zone->data;
+  shpool = (ngx_slab_pool_t *) shm_zone->shm.addr;
+
+	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, shm_zone->shm.log, 0,
+           "uploadprogress clean old connections at %T", now);
+
+  ngx_shmtx_lock(&shpool->mutex);
+  node = (ngx_rbtree_node_t *)ctx->list_tail.prev;
+  for ( ;; ) {
+
+
+      if (node == &ctx->list_head.node) {
+          break;
+      }
+			
+			up = (ngx_http_uploadprogress_node_t *)node;
+
+			ngx_log_debug3(NGX_LOG_DEBUG_HTTP, shm_zone->shm.log, 0,
+		           "uploadprogress clean: scanning %08XD (req %p) timeout at %T", node->key, up->r, up->timeout);
+
+			if ( up->r == NULL && up->timeout < now )
+			{
+	      up->next->prev = up->prev;
+	      up->prev->next = up->next;
+
+				ngx_log_debug3(NGX_LOG_DEBUG_HTTP, shm_zone->shm.log, 0,
+			           "uploadprogress clean: removing %08XD (req %p) ", node->key, up->r, up->timeout);
+
+				ngx_rbtree_delete(ctx->rbtree, node);
+				ngx_slab_free_locked(shpool, node);
+			}
+			
+			node = (ngx_rbtree_node_t *)up->prev;
+		}
+	  ngx_shmtx_unlock(&shpool->mutex);
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, shm_zone->shm.log, 0,
+	           "uploadprogress clean old connections restarting timer");
+
+	ngx_add_timer(ev, 60 * 1000); /* trigger again in 60s */
+}
+
+
+
 /*
 removes the expired node from the upload rbtree
 */
 static void
 ngx_http_uploadprogress_cleanup(void *data)
 {
-    ngx_http_uploadprogress_cleanup_t  *lzcln = data;
-
-    ngx_slab_pool_t             *shpool;
-    ngx_rbtree_node_t           *node;
+    ngx_http_uploadprogress_cleanup_t  *upcln = data;
+	  ngx_slab_pool_t             *shpool;
+	  ngx_rbtree_node_t           *node;
     ngx_http_uploadprogress_ctx_t   *ctx;
-    ngx_http_uploadprogress_node_t  *lz;
+    ngx_http_uploadprogress_node_t  *up;
 
-		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, lzcln->shm_zone->shm.log, 0,
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, upcln->shm_zone->shm.log, 0,
 	           "uploadprogress cleanup called");
 
-    ctx = lzcln->shm_zone->data;
-    shpool = (ngx_slab_pool_t *) lzcln->shm_zone->shm.addr;
-    node = lzcln->node;
-    lz = (ngx_http_uploadprogress_node_t *) &node->color;
+    ctx = upcln->shm_zone->data;
+    shpool = (ngx_slab_pool_t *) upcln->shm_zone->shm.addr;
+    node = upcln->node;
+    up = (ngx_http_uploadprogress_node_t *) node;
 
-    ngx_shmtx_lock(&shpool->mutex);
+		up->r = NULL; /* mark the original request as done */
+		up->timeout = ngx_time() + 60; /* keep tracking for 60s */
 
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, lzcln->shm_zone->shm.log, 0,
-                   "upload progress cleanup: %08XD", node->key);
-
-    ngx_rbtree_delete(ctx->rbtree, node);
-    ngx_slab_free_locked(shpool, node);
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, lzcln->shm_zone->shm.log, 0,
-			"upload progress cleanup node removed: %08XD", node->key);
-    ngx_shmtx_unlock(&shpool->mutex);
+		ngx_log_debug2(NGX_LOG_DEBUG_HTTP, upcln->shm_zone->shm.log, 0,
+	           "uploadprogress cleanup: connection %08XD to be deleted at %T", node->key, up->timeout);
+		
 }
 
 static ngx_int_t
@@ -688,6 +751,119 @@ ngx_http_uploadprogress_init_zone(ngx_shm_zone_t *shm_zone, void *data)
     return NGX_OK;
 }
 
+static ngx_int_t
+ngx_http_uploadprogress_errortracker(ngx_http_request_t *r)
+{
+  	size_t                          n;
+		ngx_str_t 										 *id;
+  	ngx_slab_pool_t                *shpool;
+  	ngx_rbtree_node_t              *node;
+  	ngx_http_uploadprogress_ctx_t      *ctx;
+  	ngx_http_uploadprogress_node_t     *up;
+    ngx_http_uploadprogress_conf_t	  *upcf;
+	  uint32_t                        hash;
+		ngx_http_uploadprogress_cleanup_t	 *upcln;
+	  ngx_pool_cleanup_t             *cln;
+
+		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+	           "uploadprogress error-tracker error: %D", r->err_status);
+		if ( r->err_status == NGX_HTTP_REQUEST_ENTITY_TOO_LARGE )
+		{
+
+    	upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
+
+		  if (!upcf->track) {
+			  	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+			                 "uploadprogress error-tracker not tracking in this location for id: %V", id);
+		    goto finish;
+		  }
+
+			id = get_tracking_id(r);
+			if ( id == NULL )
+			{
+				ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+		             "trackuploads error-tracker no id found in POST upload req");
+				goto finish;
+			}
+
+			ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+		           "trackuploads error-tracker id found: %V", id);
+
+
+		  if (upcf->shm_zone == NULL) {
+		  	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+		                 "trackuploads no shm_zone for id: %V", id);
+									goto finish;
+		  }
+
+		  ctx = upcf->shm_zone->data;
+
+		  hash = ngx_crc32_short(id->data, id->len);
+
+			ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+		               "trackuploads error-tracking hash %08XD for id: %V",hash, id);
+
+		  shpool = (ngx_slab_pool_t *) upcf->shm_zone->shm.addr;
+
+		  ngx_shmtx_lock(&shpool->mutex);
+
+			if ( (up = find_node(id, ctx, r->connection->log)) != NULL )
+			{
+				ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+			               "trackuploads error-tracking found node for id: %V", id);
+				up->r = NULL; /* don't really track it since it errors */
+				up->err_status = r->err_status;
+				goto finish;
+			}
+
+			/* no lz found for this tracking id */
+		  n = sizeof(ngx_http_uploadprogress_node_t)
+		      + id->len;
+
+			  cln = ngx_pool_cleanup_add(r->pool, sizeof(ngx_http_uploadprogress_cleanup_t));
+			  if (cln == NULL) {
+					goto finish;
+			  }
+
+
+		  node = ngx_slab_alloc_locked(shpool, n);
+		  if (node == NULL) {
+		      ngx_shmtx_unlock(&shpool->mutex);
+					goto finish;
+		  }
+
+		  up = (ngx_http_uploadprogress_node_t *) node;
+
+		  node->key = hash;
+		  up->len = (u_char) id->len;
+			up->r = NULL; /* don't really track it since it errors */
+			up->err_status = r->err_status;
+		  ngx_memcpy(up->data, id->data, id->len);
+
+		  up->next = ctx->list_head.next;
+			up->next->prev = up;
+		  up->prev = &ctx->list_head;
+		  ctx->list_head.next = up;
+
+		  ngx_rbtree_insert(ctx->rbtree, node);
+
+		  ngx_shmtx_unlock(&shpool->mutex);
+
+		  cln->handler = ngx_http_uploadprogress_cleanup;
+		  upcln = cln->data;
+		  upcln->shm_zone = upcf->shm_zone;
+		  upcln->node = node;
+
+		  ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+		                 "trackuploads error-tracking adding: %08XD", node->key);
+
+		}
+
+finish:		
+		/* call the filter chain as usual */ 
+    return ngx_http_next_header_filter(r);
+}
+
 
 static ngx_int_t
 ngx_http_uploadprogress_init(ngx_conf_t *cf)
@@ -697,12 +873,24 @@ ngx_http_uploadprogress_init(ngx_conf_t *cf)
 
     cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
 
+		/* install the tracking handler */
     h = ngx_array_push(&cmcf->phases[NGX_HTTP_REWRITE_PHASE].handlers);
     if (h == NULL) {
         return NGX_ERROR;
     }
 
     *h = ngx_http_uploadprogress_handler;
+
+		/* 
+			we also need to track HTTP 413 errors 
+			unfortunately, the above handler is not called in case of 
+			errors.
+			we have to register a header output filter that will be
+			called in any case to track those errors
+		*/
+	  ngx_http_next_header_filter = ngx_http_top_header_filter;
+	  ngx_http_top_header_filter = ngx_http_uploadprogress_errortracker;
+		
     return NGX_OK;
 }
 
@@ -751,6 +939,12 @@ ngx_http_upload_progress(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
         return NGX_CONF_ERROR;
     }
 
+    ctx->list_head.prev = NULL;
+    ctx->list_head.next = &ctx->list_tail;
+
+    ctx->list_tail.prev = &ctx->list_head;
+    ctx->list_tail.next = NULL;
+
     n = ngx_parse_size(&value[2]);
 
     if (n == NGX_ERROR) {
@@ -772,7 +966,7 @@ ngx_http_upload_progress(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     }
 
 	  ngx_log_debug2(NGX_LOG_DEBUG_HTTP, cf->log, 0,
-	                 "ngx_upload_progress name: %V, szhm_zone: %p", value[1], shm_zone);
+	                 "ngx_upload_progress name: %V, szhm_zone: %p", &value[1], shm_zone);
 
     if (shm_zone->data) {
         ctx = shm_zone->data;
@@ -789,6 +983,8 @@ ngx_http_upload_progress(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     return NGX_CONF_OK;
 }
 
+
+
 static char *
 ngx_http_track_uploads(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
@@ -801,7 +997,7 @@ ngx_http_track_uploads(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     value = cf->args->elts;
 
 		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, cf->log, 0,
-		                 "ngx_track_uploads name: %V", value[1]);
+		                 "ngx_track_uploads name: %V", &value[1]);
 
     lzcf->shm_zone = ngx_shared_memory_add(cf, &value[1], 0,
                                            &ngx_http_uploadprogress_module);
@@ -812,7 +1008,7 @@ ngx_http_track_uploads(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 		lzcf->track = (u_char)1;
 
 	  ngx_log_debug1(NGX_LOG_DEBUG_HTTP, cf->log, 0,
-	                 "ngx_track_uploads name: %V,szhm_zone: %p", value[1], lzcf->shm_zone);
+	                 "ngx_track_uploads name: %V,szhm_zone: %p", &value[1], lzcf->shm_zone);
 
     return NGX_CONF_OK;
 }
@@ -831,7 +1027,7 @@ ngx_http_report_uploads(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     value = cf->args->elts;
 
 	  ngx_log_debug1(NGX_LOG_DEBUG_HTTP, cf->log, 0,
-	                 "ngx_report_uploads name: %V", value[1]);
+	                 "ngx_report_uploads name: %V", &value[1]);
 
     lzcf->shm_zone = ngx_shared_memory_add(cf, &value[1], 0,
                                            &ngx_http_uploadprogress_module);
@@ -840,7 +1036,7 @@ ngx_http_report_uploads(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     }
 
 	  ngx_log_debug1(NGX_LOG_DEBUG_HTTP, cf->log, 0,
-	                 "ngx_report_uploads name: %V, szhm_zone: %p", value[1], lzcf->shm_zone);
+	                 "ngx_report_uploads name: %V, szhm_zone: %p", &value[1], lzcf->shm_zone);
 
 		lzcf->track = (u_char)0;
 
