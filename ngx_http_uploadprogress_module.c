@@ -773,8 +773,8 @@ ngx_http_uploadprogress_errortracker(ngx_http_request_t *r)
     	upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
 
 		  if (!upcf->track) {
-			  	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-			                 "uploadprogress error-tracker not tracking in this location for id: %V", id);
+			  	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+			                 "uploadprogress error-tracker not tracking in this location");
 		    goto finish;
 		  }
 
@@ -854,9 +854,17 @@ ngx_http_uploadprogress_errortracker(ngx_http_request_t *r)
 		  upcln->shm_zone = upcf->shm_zone;
 		  upcln->node = node;
 
+			/* start the timer if needed */
+			if ( !upcf->cleanup.timer_set)
+			{
+				upcf->cleanup.data = upcf->shm_zone;
+				upcf->cleanup.handler = ngx_clean_old_connections;
+				upcf->cleanup.log = r->connection->log;
+				ngx_add_timer(&upcf->cleanup, 60 * 1000);
+			}
+
 		  ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 		                 "trackuploads error-tracking adding: %08XD", node->key);
-
 		}
 
 finish:		
