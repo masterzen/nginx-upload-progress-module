@@ -68,7 +68,7 @@ upload_progress
 	
 track_uploads
 +++++++++++++
-	:Syntax: track_uploads <zone_name>
+	:Syntax: track_uploads <zone_name> <timeout>
 	:Default: none
 	:Context: location
 	:Description:
@@ -77,6 +77,8 @@ track_uploads
 	Since Nginx doesn't support yet RFC 1867 upload, the location must be a proxy_pass or fastcgi location.
 	The POST _must_ have a query parameter called X-Progress-ID (or an HTTP header of the same name) whose value is the
 	unique identifier used to get progress information. If the POST has no such information, the upload will not be tracked.
+	The tracked connections are kept at most <timeout> seconds after they have been finished to be able to serve 
+	unseful information to upload progress probes.
 	
 report_uploads
 ++++++++++++++
@@ -122,7 +124,8 @@ http {
 			proxy_redirect default;
 			
 			# track uploads in the 'proxied' zone
-			track_uploads proxied;
+			# remember connections for 30s after they finished
+			track_uploads proxied 30s;
 		}
 		
 		location ^~ /progress {
