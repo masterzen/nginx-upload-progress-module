@@ -386,7 +386,7 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
         }
     }
 
-    if (orig == NULL) {
+    if (orig == NULL || orig->request_body == NULL) {
         if (up != NULL && up->err_status != NGX_HTTP_REQUEST_ENTITY_TOO_LARGE) {
             size = sizeof("new Object({ 'state' : 'done' })\r\n");
         } else if (up != NULL && up->err_status == NGX_HTTP_REQUEST_ENTITY_TOO_LARGE) {
@@ -411,7 +411,7 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
     out.buf = b;
     out.next = NULL;
 
-    if (orig == NULL) {
+    if (orig == NULL || orig->request_body == NULL ) {
         if (up == NULL) {
             b->last = ngx_cpymem(b->last, "new Object({ 'state' : 'starting' })\r\n",
                                  sizeof("new Object({ 'state' : 'starting' })\r\n") -
