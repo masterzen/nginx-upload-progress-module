@@ -124,6 +124,8 @@ get_tracking_id(ngx_http_request_t * r)
     ngx_table_elt_t                 *header;
     ngx_str_t                       *ret;
 
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "upload-progress: get_tracking_id");
+
     part = &r->headers_in.headers.part;
     header = part->elts;
 
@@ -140,20 +142,40 @@ get_tracking_id(ngx_http_request_t * r)
         }
 
         if (header[i].key.len == x_progress_id.len
-            && ngx_strncmp(header[i].key.data, x_progress_id.data,
+            && ngx_strncasecmp(header[i].key.data, x_progress_id.data,
                            header[i].key.len) == 0) {
             ret = ngx_pcalloc(r->pool, sizeof(ngx_str_t));
             ret->data = header[i].value.data;
             ret->len = header[i].value.len;
+				    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
+			                     "upload-progress: get_tracking_id found header: %V", ret);
             return ret;
         }
     }
 
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
+		               "upload-progress: get_tracking_id no header found");
+
     /* not found, check as a reaquest arg */
     if (r->args.len) {
-        p = (u_char *) ngx_strstr(r->args.data, "X-Progress-ID=");
-
-        if (p) {
+        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
+                       "upload-progress: get_tracking_id no header found but args present");
+        i = 0;
+        p = r->args.data;
+        do {
+            ngx_uint_t len = r->args.len - (p - r->args.data);
+            if (len >= 14 && ngx_strncasecmp(p, (u_char*)"X-Progress-ID=", 14) == 0) {
+              ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
+                             "upload-progress: get_tracking_id found args: %s",p);
+                i = 1;
+                break;
+            }
+            if (len<=0)
+                break;
+        } 
+        while(p++);
+				
+        if (i) {
             start_p = p += 14;
             while (p < r->args.data + r->args.len) {
                 if (*p++ != '&') {
@@ -164,10 +186,14 @@ get_tracking_id(ngx_http_request_t * r)
             ret = ngx_pcalloc(r->pool, sizeof(ngx_str_t));
             ret->data = start_p;
             ret->len = p - start_p;
+						ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
+						               "upload-progress: get_tracking_id found args: %V",ret);
             return ret;
         }
     }
-
+		
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
+		               "upload-progress: get_tracking_id no id found");
     return NULL;
 }
 
