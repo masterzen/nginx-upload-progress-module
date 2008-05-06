@@ -14,7 +14,7 @@ It works because Nginx acts as an accelerator of an upstream server, storing upl
 on disk, before transmitting it to the upstream server. Each individual POST upload request
 should contain a progress unique identifier.
 
-This module is Copyright (c) 2007 Brice Figureau, and is licensed under the BSD license (see LICENSE).
+This module is Copyright (c) 2007,2008 Brice Figureau, and is licensed under the BSD license (see LICENSE).
  * rbtree and shm_zone code is based on Igor Sysoev limit_zone Nginx module.
  * expire header code is based on Igor Sysoev header_filter Nginx module.
 
@@ -31,7 +31,7 @@ WARNINGS:
 Installation
 ============
 
-nginx_uploadprogress_module has been tested with Nginx 0.6.1, 0.6.12 and 0.6.13.
+nginx_uploadprogress_module has been tested with Nginx 0.6.1, 0.6.12, 0.6.13 and 0.6.30.
 
 Download the Nginx sources from http://nginx.net/ and unpack it.
 
@@ -94,8 +94,9 @@ report_uploads
 		* the upload request has ended:
 				new Object({ 'state' : 'done' })
 		
-		* the upload request generated an HTTP 413 error (Request entity too large):
-				new Object({ 'state' : 'error', 'status' : 413 })
+		* the upload request generated an HTTP error
+				new Object({ 'state' : 'error', 'status' : <error code> })
+			one error code that can be of use to track for the client is 413 (request entity too large).
 		
 		* the upload request is in progress:
 				new Object({ 'state' : 'uploading', 'received' : <size_received>, 'size' : <total_size>})
