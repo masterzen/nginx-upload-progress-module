@@ -387,12 +387,12 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
     }
 
     if (orig == NULL || orig->request_body == NULL) {
-        if (up != NULL && up->err_status != NGX_HTTP_REQUEST_ENTITY_TOO_LARGE) {
-            size = sizeof("new Object({ 'state' : 'done' })\r\n");
-        } else if (up != NULL && up->err_status == NGX_HTTP_REQUEST_ENTITY_TOO_LARGE) {
-            size = sizeof("new Object({ 'state' : 'error', 'status' : 413 })\r\n");
-        } else {
+        if (up == NULL ) {
             size = sizeof("new Object({ 'state' : 'starting' })\r\n");
+        } else if (up != NULL && up->err_status >= NGX_HTTP_SPECIAL_RESPONSE) {
+            size = sizeof("new Object({ 'state' : 'error', 'status' : ") + NGX_INT_T_LEN + sizeof(" })\r\n");
+        } else {
+            size = sizeof("new Object({ 'state' : 'done' })\r\n");
         }
     } else if (orig->err_status == NGX_HTTP_REQUEST_ENTITY_TOO_LARGE) {
         size = sizeof("new Object({ 'state' : 'error', 'status' : 413 })\r\n");
@@ -418,21 +418,20 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
                                  1);
             ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                            "reportuploads returning starting");
-        } else if (up != NULL && up->err_status == NGX_HTTP_REQUEST_ENTITY_TOO_LARGE) {
-            b->last =
-                ngx_cpymem(b->last,
-                           "new Object({ 'state' : 'error', 'status' : 413 })\r\n",
-                           sizeof
-                           ("new Object({ 'state' : 'error', 'status' : 413 })\r\n")
-                           - 1);
-            ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "reportuploads returning error 413");
-        } else {
+        } else if (up != NULL && up->err_status >= NGX_HTTP_SPECIAL_RESPONSE) {
+            b->last = ngx_cpymem(b->last, "new Object({ 'state' : 'error', 'status' : ",
+                                   sizeof("new Object({ 'state' : 'error', 'status' : ") - 1);
+        		b->last =	ngx_sprintf(b->last, "%ui })\r\n", up->err_status );
+            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                           "reportuploads returning error condition: %ui", up->err_status);
+        }
+				else {
             b->last = ngx_cpymem(b->last, "new Object({ 'state' : 'done' })\r\n",
-                                 sizeof("new Object({ 'state' : 'done' })\r\n") - 1);
+                                   sizeof("new Object({ 'state' : 'done' })\r\n") -
+                                 1);
             ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                            "reportuploads returning done");
-        }
+				}
     } else if (orig->err_status == NGX_HTTP_REQUEST_ENTITY_TOO_LARGE) {
         b->last =
             ngx_cpymem(b->last,
@@ -445,7 +444,7 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
     } else {
         b->last =
             ngx_cpymem(b->last, "new Object({ 'state' : 'uploading', 'received' : ",
-                       sizeof("new Object({ 'state' : 'uploading', 'received' : ") -
+                         sizeof("new Object({ 'state' : 'uploading', 'received' : ") -
                        1);
 
         b->last =
@@ -795,7 +794,7 @@ ngx_http_uploadprogress_errortracker(ngx_http_request_t * r)
 
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "uploadprogress error-tracker error: %D", r->err_status);
-    if (r->err_status == NGX_HTTP_REQUEST_ENTITY_TOO_LARGE) {
+    if (r->err_status >= NGX_HTTP_SPECIAL_RESPONSE) {
 
         upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
 

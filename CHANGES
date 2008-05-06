@@ -1,3 +1,14 @@
+nginx_upload_progress release 0.3                                  06 May 2008
+
+ * fixed crash if the upload was denied by nginx because of any error
+   condition (thanks to Michal Drapiewski for his detailed report)
+	 
+ * report original upload error condition to client in the upload progress 
+   probe
+ 
+ * case-insensitive checking of the X-Progress-ID header to overcome Internet
+   Explorer XMLHttpRequest issue.
+
 nginx_upload_progress release 0.2                                  10 Oct 2007
 
  * the system now remembers old active uploads for 1 minute to be
