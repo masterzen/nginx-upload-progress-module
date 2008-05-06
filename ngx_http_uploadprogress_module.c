@@ -576,7 +576,7 @@ ngx_http_uploadprogress_handler(ngx_http_request_t * r)
     if (!upcf->cleanup.timer_set) {
         upcf->cleanup.data = upcf->shm_zone;
         upcf->cleanup.handler = ngx_clean_old_connections;
-        upcf->cleanup.log = r->connection->log;
+        upcf->cleanup.log = upcf->shm_zone->shm.log;
         ngx_add_timer(&upcf->cleanup, TIMER_FREQUENCY);
     }
 
@@ -877,7 +877,7 @@ ngx_http_uploadprogress_errortracker(ngx_http_request_t * r)
         if (!upcf->cleanup.timer_set) {
             upcf->cleanup.data = upcf->shm_zone;
             upcf->cleanup.handler = ngx_clean_old_connections;
-            upcf->cleanup.log = r->connection->log;
+            upcf->cleanup.log = upcf->shm_zone->shm.log;
             ngx_add_timer(&upcf->cleanup, TIMER_FREQUENCY);
         }
 
@@ -916,7 +916,7 @@ ngx_http_uploadprogress_init(ngx_conf_t * cf)
     *h = ngx_http_uploadprogress_handler;
 
     /* 
-       we also need to track HTTP 413 errors 
+       we also need to track HTTP errors 
        unfortunately, the above handler is not called in case of 
        errors.
        we have to register a header output filter that will be
