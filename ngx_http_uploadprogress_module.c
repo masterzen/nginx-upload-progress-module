@@ -53,6 +53,7 @@ static char *ngx_http_track_uploads(ngx_conf_t * cf, ngx_command_t * cmd, void *
 static char *ngx_http_report_uploads(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
 static char *ngx_http_upload_progress(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
 static void ngx_clean_old_connections(ngx_event_t * ev);
+static ngx_int_t ngx_http_uploadprogress_content_handler(ngx_http_request_t *r);
 
 static ngx_http_output_header_filter_pt ngx_http_next_header_filter;
 
@@ -245,6 +246,14 @@ find_node(ngx_str_t * id, ngx_http_uploadprogress_ctx_t * ctx, ngx_log_t * log)
     }
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0, "upload-progress: can't find node");
     return NULL;
+}
+
+
+static ngx_int_t
+ngx_http_uploadprogress_content_handler(ngx_http_request_t *r)
+{
+  ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0, "upload-progress: ngx_http_uploadprogress_content_handler");
+	return ngx_http_proxy_handler(r);
 }
 
 /* This generates the response for the report */
@@ -1022,6 +1031,9 @@ ngx_http_upload_progress(ngx_conf_t * cf, ngx_command_t * cmd, void *conf)
 static char*
 ngx_http_track_uploads(ngx_conf_t * cf, ngx_command_t * cmd, void *conf)
 {
+    ngx_http_handler_pt        *h;
+    ngx_http_core_main_conf_t  *cmcf;
+
     ngx_http_uploadprogress_conf_t  *lzcf = conf;
     ngx_str_t                       *value;
 
@@ -1058,8 +1070,14 @@ ngx_http_track_uploads(ngx_conf_t * cf, ngx_command_t * cmd, void *conf)
         return NGX_CONF_ERROR;
     }
 
+    cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
 
+    h = ngx_array_push(&cmcf->phases[NGX_HTTP_CONTENT_PHASE].handlers);
+    if (h == NULL) {
+        return NGX_ERROR;
+    }
 
+    *h = ngx_http_uploadprogress_content_handler;
     return NGX_CONF_OK;
 }
 
