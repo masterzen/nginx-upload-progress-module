@@ -15,8 +15,8 @@ typedef struct ngx_http_uploadprogress_node_s ngx_http_uploadprogress_node_t;
 struct ngx_http_uploadprogress_node_s {
     ngx_rbtree_node_t                node;
     ngx_uint_t                       err_status;
-    ngx_uint_t                       rest;
-    ngx_uint_t                       length;
+    off_t                            rest;
+    off_t                            length;
     ngx_uint_t                       done;
     time_t                           timeout;
     struct ngx_http_uploadprogress_node_s *prev;
@@ -333,7 +333,8 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
     ngx_str_t                       *id;
     ngx_buf_t                       *b;
     ngx_chain_t                      out;
-    ngx_int_t                        rc, size, found=0, rest=0, length=0, done=0, err_status=0;
+		ngx_int_t                        rc, size, found=0, done=0, err_status=0;
+    off_t                            rest=0, length=0;
     ngx_uint_t                       len, i;
     ngx_slab_pool_t                 *shpool;
     ngx_http_uploadprogress_conf_t  *upcf;
