@@ -79,6 +79,8 @@ track_uploads
 	unique identifier used to get progress information. If the POST has no such information, the upload will not be tracked.
 	The tracked connections are kept at most <timeout> seconds after they have been finished to be able to serve 
 	unseful information to upload progress probes.
+  Warning: this directive must be the last directive of the location. It must be in a proxy_pass or fastcgi_pass
+  location.
 	
 report_uploads
 ++++++++++++++

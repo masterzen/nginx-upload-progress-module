@@ -14,8 +14,10 @@ typedef struct ngx_http_uploadprogress_node_s ngx_http_uploadprogress_node_t;
 
 struct ngx_http_uploadprogress_node_s {
     ngx_rbtree_node_t                node;
-    ngx_http_request_t              *r;
     ngx_uint_t                       err_status;
+    ngx_uint_t                       rest;
+    ngx_uint_t                       length;
+    ngx_uint_t                       done;
     time_t                           timeout;
     struct ngx_http_uploadprogress_node_s *prev;
     struct ngx_http_uploadprogress_node_s *next;
@@ -37,8 +39,10 @@ typedef struct {
 
 typedef struct {
     ngx_shm_zone_t                  *shm_zone;
-		time_t                           timeout;
+    time_t                           timeout;
     ngx_event_t                      cleanup;
+    ngx_http_handler_pt              handler;
+    ngx_http_event_handler_pt        read_event_handler;
     u_char                           track;
 } ngx_http_uploadprogress_conf_t;
 
@@ -248,12 +252,78 @@ find_node(ngx_str_t * id, ngx_http_uploadprogress_ctx_t * ctx, ngx_log_t * log)
     return NULL;
 }
 
+static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r);
 
 static ngx_int_t
 ngx_http_uploadprogress_content_handler(ngx_http_request_t *r)
 {
-  ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0, "upload-progress: ngx_http_uploadprogress_content_handler");
-	return ngx_http_proxy_handler(r);
+    ngx_int_t                        rc;
+    ngx_http_uploadprogress_conf_t  *upcf;
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "upload-progress: ngx_http_uploadprogress_content_handler");
+    upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
+
+    /* call the original request handler */
+    rc = upcf->handler(r);
+
+    /* hijack the read_event_handler */
+    upcf->read_event_handler = r->read_event_handler;
+    r->read_event_handler = ngx_http_uploadprogress_event_handler;
+
+    return rc;
+}
+
+static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
+{
+    ngx_str_t                       *id;
+    ngx_slab_pool_t                 *shpool;
+    ngx_http_uploadprogress_ctx_t   *ctx;
+    ngx_http_uploadprogress_node_t  *up;
+    ngx_http_uploadprogress_conf_t  *upcf;
+
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "upload-progress: ngx_http_uploadprogress_event_handler");
+    
+    /* call the original read event handler */
+    upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
+    upcf->read_event_handler(r);
+
+    /* find node, update rest */
+    id = get_tracking_id(r);
+
+    if (id == NULL) {
+        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "upload-progress: read_event_handler cant find id");
+        return;
+    }
+
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "upload-progress: read_event_handler found id: %V", id);
+
+    if (upcf->shm_zone == NULL) {
+        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "upload-progress: read_event_handler no shm_zone for id: %V", id);
+        return;
+    }
+
+    ctx = upcf->shm_zone->data;
+
+    /* get the original connection of the upload */
+    shpool = (ngx_slab_pool_t *) upcf->shm_zone->shm.addr;
+
+    ngx_shmtx_lock(&shpool->mutex);
+
+    up = find_node(id, ctx, r->connection->log);
+    if (up != NULL) {
+        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "upload-progress: read_event_handler found node: %V", id);
+				up->rest = r->request_body->rest;
+				up->length = r->headers_in.content_length_n;
+        ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "upload-progress: read_event_handler storing rest %uO/%uO for %V", up->rest, up->length, id);
+    } else {
+        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "upload-progress: read_event_handler not found: %V", id);
+    }
+    ngx_shmtx_unlock(&shpool->mutex);
 }
 
 /* This generates the response for the report */
@@ -263,8 +333,7 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
     ngx_str_t                       *id;
     ngx_buf_t                       *b;
     ngx_chain_t                      out;
-    ngx_http_request_t              *orig;
-    ngx_int_t                        rc, size;
+    ngx_int_t                        rc, size, found=0, rest=0, length=0, done=0, err_status=0;
     ngx_uint_t                       len, i;
     ngx_slab_pool_t                 *shpool;
     ngx_http_uploadprogress_conf_t  *upcf;
@@ -303,7 +372,6 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
         return NGX_DECLINED;
     }
 
-    orig = NULL;
     ctx = upcf->shm_zone->data;
 
     /* get the original connection of the upload */
@@ -315,7 +383,11 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
     if (up != NULL) {
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                        "reportuploads found node: %V", id);
-        orig = up->r;
+				rest = up->rest;
+				length = up->length;
+				done = up->done;
+				err_status = up->err_status;
+				found = 1;
     } else {
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                        "reportuploads not found: %V", id);
@@ -395,17 +467,21 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
         }
     }
 
-    if (orig == NULL || orig->request_body == NULL) {
-        if (up == NULL ) {
-            size = sizeof("new Object({ 'state' : 'starting' })\r\n");
-        } else if (up != NULL && up->err_status >= NGX_HTTP_SPECIAL_RESPONSE) {
-            size = sizeof("new Object({ 'state' : 'error', 'status' : ") + NGX_INT_T_LEN + sizeof(" })\r\n");
-        } else {
-            size = sizeof("new Object({ 'state' : 'done' })\r\n");
-        }
-    } else if (orig->err_status == NGX_HTTP_REQUEST_ENTITY_TOO_LARGE) {
-        size = sizeof("new Object({ 'state' : 'error', 'status' : 413 })\r\n");
-    } else {
+/*
+ There are 4 possibilities
+   * request not yet started: found = false
+   * request in error:        err_status >= NGX_HTTP_SPECIAL_RESPONSE
+   * request finished:        done = true
+   * reauest in progress:     rest > 0 
+ */
+
+    if (!found) {
+      size = sizeof("new Object({ 'state' : 'starting' })\r\n");			
+		} else if (err_status >= NGX_HTTP_SPECIAL_RESPONSE) {
+        size = sizeof("new Object({ 'state' : 'error', 'status' : ") + NGX_INT_T_LEN + sizeof(" })\r\n");
+		} else if (done) {
+    		size = sizeof("new Object({ 'state' : 'done' })\r\n");
+	  } else {
         size =
             sizeof("new Object({ 'state' : 'uploading', 'received' : ") +
             NGX_INT_T_LEN + sizeof(" })\r\n");
@@ -420,55 +496,36 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
     out.buf = b;
     out.next = NULL;
 
-    if (orig == NULL || orig->request_body == NULL ) {
-        if (up == NULL) {
-            b->last = ngx_cpymem(b->last, "new Object({ 'state' : 'starting' })\r\n",
-                                 sizeof("new Object({ 'state' : 'starting' })\r\n") -
-                                 1);
-            ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "reportuploads returning starting");
-        } else if (up != NULL && up->err_status >= NGX_HTTP_SPECIAL_RESPONSE) {
-            b->last = ngx_cpymem(b->last, "new Object({ 'state' : 'error', 'status' : ",
-                                   sizeof("new Object({ 'state' : 'error', 'status' : ") - 1);
-        		b->last =	ngx_sprintf(b->last, "%ui })\r\n", up->err_status );
-            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "reportuploads returning error condition: %ui", up->err_status);
-        }
-				else {
-            b->last = ngx_cpymem(b->last, "new Object({ 'state' : 'done' })\r\n",
-                                   sizeof("new Object({ 'state' : 'done' })\r\n") -
-                                 1);
-            ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "reportuploads returning done");
-				}
-    } else if (orig->err_status == NGX_HTTP_REQUEST_ENTITY_TOO_LARGE) {
-        b->last =
-            ngx_cpymem(b->last,
-                       "new Object({ 'state' : 'error', 'status' : 413 })\r\n",
-                       sizeof
-                       ("new Object({ 'state' : 'error', 'status' : 413 })\r\n") -
-                       1);
-        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                       "reportuploads returning error 413");
-    } else {
-        b->last =
-            ngx_cpymem(b->last, "new Object({ 'state' : 'uploading', 'received' : ",
-                         sizeof("new Object({ 'state' : 'uploading', 'received' : ") -
-                       1);
+    if (!found) {
+      b->last = ngx_cpymem(b->last, "new Object({ 'state' : 'starting' })\r\n",
+                           sizeof("new Object({ 'state' : 'starting' })\r\n") -
+                           1);
+      ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                     "reportuploads returning starting");
+		} else if (err_status >= NGX_HTTP_SPECIAL_RESPONSE) {
+      b->last = ngx_cpymem(b->last, "new Object({ 'state' : 'error', 'status' : ",
+                             sizeof("new Object({ 'state' : 'error', 'status' : ") - 1);
+  		b->last =	ngx_sprintf(b->last, "%ui })\r\n", err_status );
+      ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                     "reportuploads returning error condition: %ui", err_status);
+		} else if (done) {
+      b->last = ngx_cpymem(b->last, "new Object({ 'state' : 'done' })\r\n",
+                             sizeof("new Object({ 'state' : 'done' })\r\n") -
+                           1);
+      ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                     "reportuploads returning done");
+	  } else {
+      b->last =
+          ngx_cpymem(b->last, "new Object({ 'state' : 'uploading', 'received' : ",
+                       sizeof("new Object({ 'state' : 'uploading', 'received' : ") -
+                     1);
 
-        b->last =
-            ngx_sprintf(b->last, "%uO, 'size' : %uO })\r\n",
-                        (orig->headers_in.content_length_n -
-                         orig->request_body->rest),
-                        orig->headers_in.content_length_n);
+      b->last = ngx_sprintf(b->last, "%uO, 'size' : %uO })\r\n", (length - rest), length);
 
-        ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                       "reportuploads returning %uO / %uO",
-                       (orig->headers_in.content_length_n -
-                        orig->request_body->rest),
-                       orig->headers_in.content_length_n);
-
+      ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+				"reportuploads returning %uO / %uO",(length - rest), length );
     }
+
 
     r->headers_out.status = NGX_HTTP_OK;
     r->headers_out.content_length_n = b->last - b->pos;
@@ -480,7 +537,7 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
         return rc;
     }
 
-    return ngx_http_output_filter(r, &out);;
+    return ngx_http_output_filter(r, &out);
 }
 
 /* 
@@ -568,7 +625,6 @@ ngx_http_uploadprogress_handler(ngx_http_request_t * r)
 
     node->key = hash;
     up->len = (u_char) id->len;
-    up->r = r;
     up->err_status = r->err_status;
 
     up->next = ctx->list_head.next;
@@ -694,16 +750,16 @@ ngx_clean_old_connections(ngx_event_t * ev)
         up = (ngx_http_uploadprogress_node_t *) node;
 
         ngx_log_debug3(NGX_LOG_DEBUG_HTTP, shm_zone->shm.log, 0,
-                       "uploadprogress clean: scanning %08XD (req %p) timeout at %T",
-                       node->key, up->r, up->timeout);
+                       "uploadprogress clean: scanning %08XD (req done %ui) timeout at %T",
+                       node->key, up->done, up->timeout);
 
-        if (up->r == NULL && up->timeout < now) {
+        if (up->done && up->timeout < now) {
             up->next->prev = up->prev;
             up->prev->next = up->next;
 
             ngx_log_debug3(NGX_LOG_DEBUG_HTTP, shm_zone->shm.log, 0,
-                           "uploadprogress clean: removing %08XD (req %p) ",
-                           node->key, up->r, up->timeout);
+                           "uploadprogress clean: removing %08XD (req %ui) ",
+                           node->key, up->done, up->timeout);
 
             ngx_rbtree_delete(ctx->rbtree, node);
             ngx_slab_free_locked(shpool, node);
@@ -741,8 +797,10 @@ ngx_http_uploadprogress_cleanup(void *data)
     node = upcln->node;
     up = (ngx_http_uploadprogress_node_t *) node;
 
-    up->r = NULL;               /* mark the original request as done */
+    ngx_shmtx_lock(&shpool->mutex);
+    up->done = 1;               /* mark the original request as done */
     up->timeout = ngx_time() + upcln->timeout;      /* keep tracking for 60s */
+    ngx_shmtx_unlock(&shpool->mutex);
 
     ngx_log_debug2(NGX_LOG_DEBUG_HTTP, upcln->shm_zone->shm.log, 0,
                    "uploadprogress cleanup: connection %08XD to be deleted at %T",
@@ -845,7 +903,6 @@ ngx_http_uploadprogress_errortracker(ngx_http_request_t * r)
         if ((up = find_node(id, ctx, r->connection->log)) != NULL) {
             ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                            "trackuploads error-tracking found node for id: %V", id);
-            up->r = NULL;       /* don't really track it since it errors */
             up->err_status = r->err_status;
             ngx_shmtx_unlock(&shpool->mutex);
             goto finish;
@@ -871,7 +928,6 @@ ngx_http_uploadprogress_errortracker(ngx_http_request_t * r)
 
         node->key = hash;
         up->len = (u_char) id->len;
-        up->r = NULL;           /* don't really track it since it errors */
         up->err_status = r->err_status;
         ngx_memcpy(up->data, id->data, id->len);
 
@@ -896,7 +952,7 @@ ngx_http_uploadprogress_errortracker(ngx_http_request_t * r)
         upcln = cln->data;
         upcln->shm_zone = upcf->shm_zone;
         upcln->node = node;
-        upcln->timeout = upcf->timeout;				
+        upcln->timeout = upcf->timeout;
 
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                        "trackuploads error-tracking adding: %08XD", node->key);
@@ -1031,9 +1087,7 @@ ngx_http_upload_progress(ngx_conf_t * cf, ngx_command_t * cmd, void *conf)
 static char*
 ngx_http_track_uploads(ngx_conf_t * cf, ngx_command_t * cmd, void *conf)
 {
-    ngx_http_handler_pt        *h;
-    ngx_http_core_main_conf_t  *cmcf;
-
+    ngx_http_core_loc_conf_t        *clcf;
     ngx_http_uploadprogress_conf_t  *lzcf = conf;
     ngx_str_t                       *value;
 
@@ -1070,14 +1124,13 @@ ngx_http_track_uploads(ngx_conf_t * cf, ngx_command_t * cmd, void *conf)
         return NGX_CONF_ERROR;
     }
 
-    cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
-
-    h = ngx_array_push(&cmcf->phases[NGX_HTTP_CONTENT_PHASE].handlers);
-    if (h == NULL) {
-        return NGX_ERROR;
+    clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
+    lzcf->handler = clcf->handler;
+    if ( lzcf->handler == NULL )
+    {
+        return "track_upload should be the last directive in the location, after either proxy_pass or fastcgi_pass";
     }
-
-    *h = ngx_http_uploadprogress_content_handler;
+    clcf->handler = ngx_http_uploadprogress_content_handler;
     return NGX_CONF_OK;
 }
 
