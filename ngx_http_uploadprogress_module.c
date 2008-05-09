@@ -265,54 +265,52 @@ ngx_http_uploadprogress_content_handler(ngx_http_request_t *r)
     /* call the original request handler */
     rc = upcf->handler(r);
 
-    /* hijack the read_event_handler */
+    /* bail out if error */
+		if (rc >= NGX_HTTP_SPECIAL_RESPONSE)
+			return rc;
+		
+		/* request is OK, hijack the read_event_handler */
     upcf->read_event_handler = r->read_event_handler;
     r->read_event_handler = ngx_http_uploadprogress_event_handler;
-
     return rc;
 }
 
 static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
 {
-  ngx_int_t  rc;
     ngx_str_t                       *id;
     ngx_slab_pool_t                 *shpool;
+    ngx_connection_t                *c;
     ngx_http_uploadprogress_ctx_t   *ctx;
     ngx_http_uploadprogress_node_t  *up;
     ngx_http_uploadprogress_conf_t  *upcf;
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "upload-progress: ngx_http_uploadprogress_event_handler");
     
+		c = r->connection;
+		
     /* call the original read event handler */
     upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
- 
-    if (r->connection->read->timedout) {
-        r->connection->timedout = 1;
-        ngx_http_finalize_request(r, NGX_HTTP_REQUEST_TIME_OUT);
-        return;
-    }
+    upcf->read_event_handler(r);
 
-    rc = ngx_http_do_read_client_request_body(r);
-
-    if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
-        ngx_http_finalize_request(r, rc);
-				return;
-    }
+		/* check that the request/connection is still OK */
+		if (r->headers_out.status >= NGX_HTTP_SPECIAL_RESPONSE) {
+			return;
+		}
 
     /* find node, update rest */
     id = get_tracking_id(r);
 
     if (id == NULL) {
-        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, c->log, 0,
                        "upload-progress: read_event_handler cant find id");
         return;
     }
 
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, c->log, 0,
                    "upload-progress: read_event_handler found id: %V", id);
 
     if (upcf->shm_zone == NULL) {
-        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, c->log, 0,
                        "upload-progress: read_event_handler no shm_zone for id: %V", id);
         return;
     }
@@ -325,7 +323,7 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
     ngx_shmtx_lock(&shpool->mutex);
 
     up = find_node(id, ctx, r->connection->log);
-    if (up != NULL) {
+    if (up != NULL && !up->done) {
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                        "upload-progress: read_event_handler found node: %V", id);
 				up->rest = r->request_body->rest;
