@@ -271,8 +271,9 @@ ngx_http_uploadprogress_content_handler(ngx_http_request_t *r)
     rc = upcf->handler(r);
 
     /* bail out if error */
-    if (rc >= NGX_HTTP_SPECIAL_RESPONSE)
+    if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
       return rc;
+    }
     
     /* request is OK, hijack the read_event_handler */
     ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_uploadprogress_module_ctx_t));
@@ -305,6 +306,24 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
 
     /* check that the request/connection is still OK */
     if (r->headers_out.status >= NGX_HTTP_SPECIAL_RESPONSE) {
+        /* should mark up as error */
+        id = get_tracking_id(r);
+        if (id != NULL) {
+            upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
+            if (upcf != NULL && upcf->shm_zone != NULL) {
+                ctx = upcf->shm_zone->data;
+
+                /* get the original connection of the upload */
+                shpool = (ngx_slab_pool_t *) upcf->shm_zone->shm.addr;
+
+                ngx_shmtx_lock(&shpool->mutex);
+                up = find_node(id, ctx, ngx_cycle->log);
+                if (up != NULL) {
+                    up->err_status = r->headers_out.status;
+                }
+                ngx_shmtx_unlock(&shpool->mutex);
+            }
+        }
         return;
     }
 
