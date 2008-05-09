@@ -17,12 +17,12 @@
 			<string>..</string>
 		</dict>
 		<dict>
+			<key>expanded</key>
+			<true/>
 			<key>name</key>
 			<string>src</string>
 			<key>regexFolderFilter</key>
 			<string>!.*/(\.[^/]*|CVS|_darcs|_MTN|\{arch\}|blib|.*~\.nib|.*\.(framework|app|pbproj|pbxproj|xcode(proj)?|bundle))$</string>
-			<key>selected</key>
-			<true/>
 			<key>sourceDirectory</key>
 			<string>../../nginx-0.6.30/src</string>
 		</dict>
@@ -61,45 +61,122 @@
 				<integer>694</integer>
 			</dict>
 		</dict>
-		<key>../ngx_http_uploadprogress_module.c</key>
+		<key>../../nginx-0.6.30/src/http/ngx_http_request.c</key>
 		<dict>
 			<key>caret</key>
 			<dict>
 				<key>column</key>
-				<integer>32</integer>
+				<integer>0</integer>
 				<key>line</key>
-				<integer>764</integer>
+				<integer>972</integer>
+			</dict>
+			<key>firstVisibleColumn</key>
+			<integer>0</integer>
+			<key>firstVisibleLine</key>
+			<integer>968</integer>
+		</dict>
+		<key>../../nginx-0.6.30/src/http/ngx_http_request.h</key>
+		<dict>
+			<key>caret</key>
+			<dict>
+				<key>column</key>
+				<integer>47</integer>
+				<key>line</key>
+				<integer>209</integer>
 			</dict>
 			<key>columnSelection</key>
 			<false/>
 			<key>firstVisibleColumn</key>
 			<integer>0</integer>
 			<key>firstVisibleLine</key>
-			<integer>736</integer>
+			<integer>190</integer>
+			<key>selectFrom</key>
+			<dict>
+				<key>column</key>
+				<integer>38</integer>
+				<key>line</key>
+				<integer>209</integer>
+			</dict>
+			<key>selectTo</key>
+			<dict>
+				<key>column</key>
+				<integer>47</integer>
+				<key>line</key>
+				<integer>209</integer>
+			</dict>
+		</dict>
+		<key>../../nginx-0.6.30/src/http/ngx_http_request_body.c</key>
+		<dict>
+			<key>caret</key>
+			<dict>
+				<key>column</key>
+				<integer>41</integer>
+				<key>line</key>
+				<integer>235</integer>
+			</dict>
+			<key>columnSelection</key>
+			<false/>
+			<key>firstVisibleColumn</key>
+			<integer>0</integer>
+			<key>firstVisibleLine</key>
+			<integer>4</integer>
+			<key>selectFrom</key>
+			<dict>
+				<key>column</key>
+				<integer>0</integer>
+				<key>line</key>
+				<integer>235</integer>
+			</dict>
+			<key>selectTo</key>
+			<dict>
+				<key>column</key>
+				<integer>41</integer>
+				<key>line</key>
+				<integer>235</integer>
+			</dict>
+		</dict>
+		<key>../ngx_http_uploadprogress_module.c</key>
+		<dict>
+			<key>caret</key>
+			<dict>
+				<key>column</key>
+				<integer>22</integer>
+				<key>line</key>
+				<integer>274</integer>
+			</dict>
+			<key>columnSelection</key>
+			<false/>
+			<key>firstVisibleColumn</key>
+			<integer>0</integer>
+			<key>firstVisibleLine</key>
+			<integer>263</integer>
 			<key>selectFrom</key>
 			<dict>
 				<key>column</key>
 				<integer>12</integer>
 				<key>line</key>
-				<integer>764</integer>
+				<integer>274</integer>
 			</dict>
 			<key>selectTo</key>
 			<dict>
 				<key>column</key>
-				<integer>32</integer>
+				<integer>49</integer>
 				<key>line</key>
-				<integer>764</integer>
+				<integer>274</integer>
 			</dict>
 		</dict>
 	</dict>
 	<key>openDocuments</key>
 	<array>
 		<string>../ngx_http_uploadprogress_module.c</string>
+		<string>../../nginx-0.6.30/src/http/ngx_http_request_body.c</string>
+		<string>../../nginx-0.6.30/src/http/ngx_http_request.c</string>
+		<string>../../nginx-0.6.30/src/http/ngx_http_request.h</string>
 		<string>../../nginx-0.6.30/src/core/ngx_slab.c</string>
 	</array>
 	<key>showFileHierarchyDrawer</key>
 	<true/>
 	<key>windowFrame</key>
-	<string>{{49, 19}, {856, 759}}</string>
+	<string>{{150, 19}, {856, 759}}</string>
 </dict>
 </plist>
