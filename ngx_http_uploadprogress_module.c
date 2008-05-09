@@ -42,9 +42,12 @@ typedef struct {
     time_t                           timeout;
     ngx_event_t                      cleanup;
     ngx_http_handler_pt              handler;
-    ngx_http_event_handler_pt        read_event_handler;
     u_char                           track;
 } ngx_http_uploadprogress_conf_t;
+
+typedef struct {
+    ngx_http_event_handler_pt        read_event_handler;
+} ngx_http_uploadprogress_module_ctx_t;
 
 static ngx_int_t ngx_http_reportuploads_handler(ngx_http_request_t *r);
 static void ngx_http_uploadprogress_cleanup(void *data);
@@ -257,8 +260,10 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r);
 static ngx_int_t
 ngx_http_uploadprogress_content_handler(ngx_http_request_t *r)
 {
-    ngx_int_t                        rc;
-    ngx_http_uploadprogress_conf_t  *upcf;
+    ngx_int_t                                    rc;
+    ngx_http_uploadprogress_module_ctx_t        *ctx;
+    ngx_http_uploadprogress_conf_t              *upcf;
+    
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "upload-progress: ngx_http_uploadprogress_content_handler");
     upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
 
@@ -270,27 +275,33 @@ ngx_http_uploadprogress_content_handler(ngx_http_request_t *r)
       return rc;
     
     /* request is OK, hijack the read_event_handler */
-    upcf->read_event_handler = r->read_event_handler;
+    ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_uploadprogress_module_ctx_t));
+    if (ctx == NULL) {
+      return NGX_ERROR;
+    }
+
+    ngx_http_set_ctx(r, ctx, ngx_http_uploadprogress_module);
     r->read_event_handler = ngx_http_uploadprogress_event_handler;
     return rc;
 }
 
 static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
 {
-    ngx_str_t                       *id;
-    ngx_slab_pool_t                 *shpool;
-    ngx_connection_t                *c;
-    ngx_http_uploadprogress_ctx_t   *ctx;
-    ngx_http_uploadprogress_node_t  *up;
-    ngx_http_uploadprogress_conf_t  *upcf;
+    ngx_str_t                                   *id;
+    ngx_slab_pool_t                             *shpool;
+    ngx_connection_t                            *c;
+    ngx_http_uploadprogress_ctx_t               *ctx;
+    ngx_http_uploadprogress_node_t              *up;
+    ngx_http_uploadprogress_conf_t              *upcf;
+    ngx_http_uploadprogress_module_ctx_t        *module_ctx;
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "upload-progress: ngx_http_uploadprogress_event_handler");
     
     c = r->connection;
     
     /* call the original read event handler */
-    upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
-    upcf->read_event_handler(r);
+    module_ctx = ngx_http_get_module_ctx(r, ngx_http_uploadprogress_module);
+    module_ctx->read_event_handler(r);
 
     /* check that the request/connection is still OK */
     if (r->headers_out.status >= NGX_HTTP_SPECIAL_RESPONSE) {
@@ -309,6 +320,7 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, c->log, 0,
                    "upload-progress: read_event_handler found id: %V", id);
 
+    upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
     if (upcf->shm_zone == NULL) {
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, c->log, 0,
                        "upload-progress: read_event_handler no shm_zone for id: %V", id);
@@ -326,8 +338,8 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
     if (up != NULL && !up->done) {
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                        "upload-progress: read_event_handler found node: %V", id);
-				up->rest = r->request_body->rest;
-				up->length = r->headers_in.content_length_n;
+        up->rest = r->request_body->rest;
+        up->length = r->headers_in.content_length_n;
         ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                        "upload-progress: read_event_handler storing rest %uO/%uO for %V", up->rest, up->length, id);
     } else {
@@ -344,7 +356,7 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
     ngx_str_t                       *id;
     ngx_buf_t                       *b;
     ngx_chain_t                      out;
-		ngx_int_t                        rc, size, found=0, done=0, err_status=0;
+    ngx_int_t                        rc, size, found=0, done=0, err_status=0;
     off_t                            rest=0, length=0;
     ngx_uint_t                       len, i;
     ngx_slab_pool_t                 *shpool;
