@@ -282,6 +282,7 @@ ngx_http_uploadprogress_content_handler(ngx_http_request_t *r)
       return NGX_ERROR;
     }
 
+    ctx->read_event_handler = r->read_event_handler;
     ngx_http_set_ctx(r, ctx, ngx_http_uploadprogress_module);
     r->read_event_handler = ngx_http_uploadprogress_event_handler;
     return rc;
