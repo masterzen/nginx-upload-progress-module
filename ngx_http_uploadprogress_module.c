@@ -274,6 +274,7 @@ ngx_http_uploadprogress_content_handler(ngx_http_request_t *r)
 
 static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
 {
+  ngx_int_t  rc;
     ngx_str_t                       *id;
     ngx_slab_pool_t                 *shpool;
     ngx_http_uploadprogress_ctx_t   *ctx;
@@ -284,7 +285,19 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
     
     /* call the original read event handler */
     upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
-    upcf->read_event_handler(r);
+ 
+    if (r->connection->read->timedout) {
+        r->connection->timedout = 1;
+        ngx_http_finalize_request(r, NGX_HTTP_REQUEST_TIME_OUT);
+        return;
+    }
+
+    rc = ngx_http_do_read_client_request_body(r);
+
+    if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
+        ngx_http_finalize_request(r, rc);
+				return;
+    }
 
     /* find node, update rest */
     id = get_tracking_id(r);
