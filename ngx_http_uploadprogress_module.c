@@ -276,15 +276,12 @@ ngx_http_uploadprogress_content_handler(ngx_http_request_t *r)
       return rc;
     }
     
-    /* request is OK, hijack the read_event_handler */
-    ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_uploadprogress_module_ctx_t));
-    if (ctx == NULL) {
-      return NGX_ERROR;
+    /* request is OK, hijack the read_event_handler if the request has to be tracked*/
+    ctx = ngx_http_get_module_ctx(r, ngx_http_uploadprogress_module);
+    if (ctx != NULL) {
+        ctx->read_event_handler = r->read_event_handler;
+        r->read_event_handler = ngx_http_uploadprogress_event_handler;
     }
-
-    ctx->read_event_handler = r->read_event_handler;
-    ngx_http_set_ctx(r, ctx, ngx_http_uploadprogress_module);
-    r->read_event_handler = ngx_http_uploadprogress_event_handler;
     return rc;
 }
 
@@ -678,6 +675,13 @@ ngx_http_uploadprogress_handler(ngx_http_request_t * r)
     upcln->node = node;
     upcln->timeout = upcf->timeout;
     upcln->r = r;
+
+    ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_uploadprogress_module_ctx_t));
+    if (ctx == NULL) {
+      return NGX_ERROR;
+    }
+
+    ngx_http_set_ctx(r, ctx, ngx_http_uploadprogress_module);
 
     /* finally says to the core we don't handle anything */
     return NGX_DECLINED;
