@@ -285,6 +285,25 @@ ngx_http_uploadprogress_content_handler(ngx_http_request_t *r)
     return rc;
 }
 
+static ngx_str_t* ngx_http_uploadprogress_strdup(ngx_str_t *src,  ngx_log_t * log)
+{
+    ngx_str_t *dst;
+    dst = ngx_alloc(src->len + sizeof(ngx_str_t), log);
+    if (dst == NULL) {
+        return NULL;
+    }
+
+    dst->len = src->len;
+    ngx_memcpy(((char*)dst + sizeof(ngx_str_t)) , src->data, src->len);
+    dst->data = ((u_char*)dst + sizeof(ngx_str_t));
+    return dst;
+}
+
+static void ngx_http_uploadprogress_strdupfree(ngx_str_t *str)
+{
+    ngx_free(str);
+}
+
 static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
 {
     ngx_str_t                                   *id;
@@ -301,6 +320,10 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
 
     /* find node, update rest */
     id = get_tracking_id(r);
+    
+    /* perform a deep copy of id */
+    id = ngx_http_uploadprogress_strdup(id, r->connection->log);
+    
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "upload-progress: read_event_handler found id: %V", id);
     upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
@@ -311,6 +334,8 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
 
     /* at this stage, r is not anymore safe to use */
     /* the request could have been closed/freed behind our back */
+    /* and thats the same issue with any other material that was allocated in the request pool */
+    /* like id for instance... */
 
     if (id == NULL) {
         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, ngx_cycle->log, 0,
@@ -319,6 +344,7 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
     }
 
     if (upcf->shm_zone == NULL) {
+        ngx_http_uploadprogress_strdupfree(id);
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, ngx_cycle->log, 0,
                        "upload-progress: read_event_handler no shm_zone for id: %V", id);
         return;
@@ -344,6 +370,7 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
                        "upload-progress: read_event_handler not found: %V", id);
     }
     ngx_shmtx_unlock(&shpool->mutex);
+    ngx_http_uploadprogress_strdupfree(id);
 }
 
 /* This generates the response for the report */
