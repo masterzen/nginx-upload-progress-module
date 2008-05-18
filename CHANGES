@@ -1,9 +1,11 @@
-nginx_upload_progress release 0.3                                  08 May 2008
+nginx_upload_progress release 0.4                                  18 May 2008
 
  * Incompatible change: track_uploads MUST be the last directive of a location
    it also must be in a proxy_pass or fastcgi_pass location.
 
  * fixed multiple worker_process issue
+
+ * fixed several crash conditions
 
 nginx_upload_progress release 0.3                                  06 May 2008
 

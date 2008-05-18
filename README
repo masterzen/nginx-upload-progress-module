@@ -23,7 +23,8 @@ http://blog.lighttpd.net/articles/2006/08/01/mod_uploadprogress-is-back
 
 
 WARNINGS: 
- * this software has never been tested under load. It only passed a few lab tests.
+ * this software has never been tested under load. It only passed a few stress lab tests (like
+20 or so parallels upload and many progress probes).
  * it is not intended to be deployed on *production systems*.
  * when compiled with --with-debug, this module will produce high number of log messages.
 
@@ -79,8 +80,8 @@ track_uploads
 	unique identifier used to get progress information. If the POST has no such information, the upload will not be tracked.
 	The tracked connections are kept at most <timeout> seconds after they have been finished to be able to serve 
 	unseful information to upload progress probes.
-  Warning: this directive must be the last directive of the location. It must be in a proxy_pass or fastcgi_pass
-  location.
+  	WARNING: this directive must be the last directive of the location. It must be in a proxy_pass or 
+	fastcgi_pass location.
 	
 report_uploads
 ++++++++++++++
