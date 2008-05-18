@@ -309,6 +309,7 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
     ngx_str_t                                   *id;
     ngx_slab_pool_t                             *shpool;
     ngx_connection_t                            *c;
+    ngx_shm_zone_t                              *shm_zone;
     ngx_http_uploadprogress_ctx_t               *ctx;
     ngx_http_uploadprogress_node_t              *up;
     ngx_http_uploadprogress_conf_t              *upcf;
@@ -327,6 +328,7 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "upload-progress: read_event_handler found id: %V", id);
     upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
+    shm_zone = upcf->shm_zone;
     
     /* call the original read event handler */
     module_ctx = ngx_http_get_module_ctx(r, ngx_http_uploadprogress_module);
@@ -335,7 +337,7 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
     /* at this stage, r is not anymore safe to use */
     /* the request could have been closed/freed behind our back */
     /* and thats the same issue with any other material that was allocated in the request pool */
-    /* like id for instance... */
+    /* that's why we duplicate id afterward */
 
     if (id == NULL) {
         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, ngx_cycle->log, 0,
@@ -343,17 +345,17 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
         return;
     }
 
-    if (upcf->shm_zone == NULL) {
+    if (shm_zone == NULL) {
         ngx_http_uploadprogress_strdupfree(id);
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, ngx_cycle->log, 0,
                        "upload-progress: read_event_handler no shm_zone for id: %V", id);
         return;
     }
 
-    ctx = upcf->shm_zone->data;
+    ctx = shm_zone->data;
 
     /* get the original connection of the upload */
-    shpool = (ngx_slab_pool_t *) upcf->shm_zone->shm.addr;
+    shpool = (ngx_slab_pool_t *) shm_zone->shm.addr;
 
     ngx_shmtx_lock(&shpool->mutex);
 
