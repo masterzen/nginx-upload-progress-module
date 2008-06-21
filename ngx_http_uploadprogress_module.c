@@ -431,8 +431,8 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
 
     up = find_node(id, ctx, r->connection->log);
     if (up != NULL) {
-        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                       "reportuploads found node: %V", id);
+        ngx_log_debug5(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "reportuploads found node: %V (rest: %uO, length: %uO, done: %ui, err_status: %ui)", id, up->rest, up->length, up->done, up->err_status);
         rest = up->rest;
         length = up->length;
         done = up->done;
@@ -676,6 +676,10 @@ ngx_http_uploadprogress_handler(ngx_http_request_t * r)
     node->key = hash;
     up->len = (u_char) id->len;
     up->err_status = r->err_status;
+    up->done = 0;
+    up->rest = 0;
+    up->length = 0;
+    up->timeout = 0;
 
     up->next = ctx->list_head.next;
     up->next->prev = up;
