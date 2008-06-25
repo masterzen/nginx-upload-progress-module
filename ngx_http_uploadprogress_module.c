@@ -800,6 +800,7 @@ ngx_clean_old_connections(ngx_event_t * ev)
     ngx_rbtree_node_t               *node;
     ngx_http_uploadprogress_node_t  *up;
     time_t                           now = ngx_time();
+    int                              count = 0;
 
 
     /* scan the rbtree */
@@ -837,14 +838,22 @@ ngx_clean_old_connections(ngx_event_t * ev)
             ngx_slab_free_locked(shpool, node);
         }
 
+        count++;
         node = (ngx_rbtree_node_t *) up->prev;
     }
-    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, shm_zone->shm.log, 0,
-                   "uploadprogress clean old connections restarting timer");
+
+    ngx_log_debug3(NGX_LOG_DEBUG_HTTP, shm_zone->shm.log, 0,
+               "uploadprogress clean old connections: quit: %ui term: %ui count: %ui", ngx_quit, ngx_terminate, count);
 
     /* don't reschedule timer if ngx_quit or ngx_terminate && nodes emtpy */
-    if ( !(ngx_quit || ngx_terminate) && (ngx_rbtree_node_t *) ctx->list_tail.prev != &ctx->list_head.node )
+    if ( !(ngx_quit || ngx_terminate) && (ngx_rbtree_node_t *) ctx->list_tail.prev != &ctx->list_head.node ) {
+        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, shm_zone->shm.log, 0,
+                   "uploadprogress clean old connections restarting timer");
         ngx_add_timer(ev, TIMER_FREQUENCY);       /* trigger again in 60s */
+    } else {
+        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, shm_zone->shm.log, 0,
+                   "uploadprogress clean old connections quitting & no more active connections: not restarting timer");
+    }
 
     ngx_shmtx_unlock(&shpool->mutex);
 }
