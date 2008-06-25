@@ -153,7 +153,7 @@ get_tracking_id(ngx_http_request_t * r)
         if (header[i].key.len == x_progress_id.len
             && ngx_strncasecmp(header[i].key.data, x_progress_id.data,
                            header[i].key.len) == 0) {
-            ret = ngx_calloc(r->pool, sizeof(ngx_str_t));
+            ret = ngx_calloc(sizeof(ngx_str_t), r->connection->log );
             ret->data = header[i].value.data;
             ret->len = header[i].value.len;
             ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
@@ -192,7 +192,7 @@ get_tracking_id(ngx_http_request_t * r)
                 }
             }
 
-            ret = ngx_calloc(r->pool, sizeof(ngx_str_t));
+            ret = ngx_calloc(sizeof(ngx_str_t), r->connection->log);
             ret->data = start_p;
             ret->len = p - start_p;
             ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
