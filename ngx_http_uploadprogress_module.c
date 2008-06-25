@@ -842,7 +842,9 @@ ngx_clean_old_connections(ngx_event_t * ev)
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, shm_zone->shm.log, 0,
                    "uploadprogress clean old connections restarting timer");
 
-    ngx_add_timer(ev, TIMER_FREQUENCY);       /* trigger again in 60s */
+    /* don't reschedule timer if ngx_quit or ngx_terminate && nodes emtpy */
+    if ( !(ngx_quit || ngx_terminate) && (ngx_rbtree_node_t *) ctx->list_tail.prev != &ctx->list_head.node )
+        ngx_add_timer(ev, TIMER_FREQUENCY);       /* trigger again in 60s */
 
     ngx_shmtx_unlock(&shpool->mutex);
 }
