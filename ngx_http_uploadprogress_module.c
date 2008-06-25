@@ -153,7 +153,7 @@ get_tracking_id(ngx_http_request_t * r)
         if (header[i].key.len == x_progress_id.len
             && ngx_strncasecmp(header[i].key.data, x_progress_id.data,
                            header[i].key.len) == 0) {
-            ret = ngx_pcalloc(r->pool, sizeof(ngx_str_t));
+            ret = ngx_calloc(r->pool, sizeof(ngx_str_t));
             ret->data = header[i].value.data;
             ret->len = header[i].value.len;
             ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
@@ -192,7 +192,7 @@ get_tracking_id(ngx_http_request_t * r)
                 }
             }
 
-            ret = ngx_pcalloc(r->pool, sizeof(ngx_str_t));
+            ret = ngx_calloc(r->pool, sizeof(ngx_str_t));
             ret->data = start_p;
             ret->len = p - start_p;
             ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
@@ -306,7 +306,7 @@ static void ngx_http_uploadprogress_strdupfree(ngx_str_t *str)
 
 static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
 {
-    ngx_str_t                                   *id;
+    ngx_str_t                                   *id, *oldid;
     ngx_slab_pool_t                             *shpool;
     ngx_connection_t                            *c;
     ngx_shm_zone_t                              *shm_zone;
@@ -320,11 +320,13 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
     c = r->connection;
 
     /* find node, update rest */
-    id = get_tracking_id(r);
+    oldid = id = get_tracking_id(r);
     
     /* perform a deep copy of id */
     id = ngx_http_uploadprogress_strdup(id, r->connection->log);
     
+    ngx_free(oldid);
+		
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "upload-progress: read_event_handler found id: %V", id);
     upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
@@ -419,6 +421,7 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
     if (upcf->shm_zone == NULL) {
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                        "reportuploads no shm_zone for id: %V", id);
+        ngx_free(id);
         return NGX_DECLINED;
     }
 
@@ -443,6 +446,7 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
                        "reportuploads not found: %V", id);
     }
     ngx_shmtx_unlock(&shpool->mutex);
+	ngx_free(id);
 
     /* send the output */
     r->headers_out.content_type.len = sizeof("text/javascript") - 1;
@@ -627,12 +631,14 @@ ngx_http_uploadprogress_handler(ngx_http_request_t * r)
     if (!upcf->track) {
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                        "trackuploads not tracking in this location for id: %V", id);
+        ngx_free(id);
         return NGX_DECLINED;
     }
 
     if (upcf->shm_zone == NULL) {
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                        "trackuploads no shm_zone for id: %V", id);
+        ngx_free(id);
         return NGX_DECLINED;
     }
 
@@ -653,12 +659,14 @@ ngx_http_uploadprogress_handler(ngx_http_request_t * r)
         ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
                       "upload_progress: tracking already registered id: %V", id);
 
+        ngx_free(id);
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
     cln = ngx_pool_cleanup_add(r->pool, sizeof(ngx_http_uploadprogress_cleanup_t));
     if (cln == NULL) {
         ngx_shmtx_unlock(&shpool->mutex);
+        ngx_free(id);
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
@@ -668,6 +676,7 @@ ngx_http_uploadprogress_handler(ngx_http_request_t * r)
     node = ngx_slab_alloc_locked(shpool, n);
     if (node == NULL) {
         ngx_shmtx_unlock(&shpool->mutex);
+        ngx_free(id);
         return NGX_HTTP_SERVICE_UNAVAILABLE;
     }
 
@@ -708,6 +717,8 @@ ngx_http_uploadprogress_handler(ngx_http_request_t * r)
     upcln->node = node;
     upcln->timeout = upcf->timeout;
     upcln->r = r;
+
+    ngx_free(id);
 
     ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_uploadprogress_module_ctx_t));
     if (ctx == NULL) {
@@ -957,6 +968,7 @@ ngx_http_uploadprogress_errortracker(ngx_http_request_t * r)
         if (upcf->shm_zone == NULL) {
             ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                            "trackuploads no shm_zone for id: %V", id);
+            ngx_free(id);							 
             goto finish;
         }
 
@@ -977,6 +989,7 @@ ngx_http_uploadprogress_errortracker(ngx_http_request_t * r)
                            "trackuploads error-tracking found node for id: %V", id);
             up->err_status = r->err_status;
             ngx_shmtx_unlock(&shpool->mutex);
+            ngx_free(id);							 
             goto finish;
         }
 
@@ -986,6 +999,7 @@ ngx_http_uploadprogress_errortracker(ngx_http_request_t * r)
         cln = ngx_pool_cleanup_add(r->pool, sizeof(ngx_http_uploadprogress_cleanup_t));
         if (cln == NULL) {
             ngx_shmtx_unlock(&shpool->mutex);
+            ngx_free(id);							 
             goto finish;
         }
 
@@ -993,6 +1007,7 @@ ngx_http_uploadprogress_errortracker(ngx_http_request_t * r)
         node = ngx_slab_alloc_locked(shpool, n);
         if (node == NULL) {
             ngx_shmtx_unlock(&shpool->mutex);
+            ngx_free(id);							 
             goto finish;
         }
 
@@ -1029,6 +1044,7 @@ ngx_http_uploadprogress_errortracker(ngx_http_request_t * r)
 
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                        "trackuploads error-tracking adding: %08XD", node->key);
+        ngx_free(id);							 
     }
 
   finish:
