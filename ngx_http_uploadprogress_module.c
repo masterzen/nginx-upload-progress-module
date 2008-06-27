@@ -826,7 +826,7 @@ ngx_clean_old_connections(ngx_event_t * ev)
                        "uploadprogress clean: scanning %08XD (req done %ui) timeout at %T",
                        node->key, up->done, up->timeout);
 
-        if (up->done && up->timeout < now) {
+        if ( (up->done && up->timeout < now) || (ngx_quit || ngx_terminate || ngx_exiting) ) {
             up->next->prev = up->prev;
             up->prev->next = up->next;
 
