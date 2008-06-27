@@ -1,3 +1,12 @@
+nginx_upload_progress release 0.5                                  28 Jun 2008
+
+ * fixed progress probes returning "done" when upload was still in progress
+   (thanks to Alexandr Kutuzov for his detailed report)
+
+ * fixed stuck worker process because of rescheduled timer when issuing a 
+   reload or graceful quit (thanks to Alexandr Kutuzov for his detailed
+   report)
+
 nginx_upload_progress release 0.4                                  18 May 2008
 
  * Incompatible change: track_uploads MUST be the last directive of a location
