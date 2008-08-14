@@ -1,4 +1,7 @@
 #!/bin/sh
+# Usage: stress.sh UPLOAD_URL PROGRESS_URL
+#
+
 i=0
 LIMIT="10k"
 FILE="100"
@@ -10,28 +13,28 @@ for j in $(seq 5)
 do
 i=`expr $i + 1`
 echo "Upload $i"
-curl --limit-rate $LIMIT -F pouet=@$FILE http://172.16.10.67/upload.html?X-Progress-ID=$i &
-sh client.sh $i &
+curl --limit-rate $LIMIT -F pouet=@$FILE $1?X-Progress-ID=$i &
+sh client.sh $i $2 &
 i=`expr $i + 1`
 echo "Upload $i"
-curl --limit-rate $LIMIT -F pouet=@$FILE http://172.16.10.67/upload.html?X-Progress-ID=$i &
-sh client.sh $i &
+curl --limit-rate $LIMIT -F pouet=@$FILE $1?X-Progress-ID=$i &
+sh client.sh $i $2 &
 i=`expr $i + 1`
 echo "Upload $i"
-curl --limit-rate $LIMIT -F pouet=@$FILE http://172.16.10.67/upload.html?X-Progress-ID=$i &
-sh client.sh $i &
+curl --limit-rate $LIMIT -F pouet=@$FILE $1?X-Progress-ID=$i &
+sh client.sh $i $2 &
 i=`expr $i + 1`
 echo "Upload $i"
-curl --limit-rate $LIMIT -F pouet=@$FILE http://172.16.10.67/upload.html?X-Progress-ID=$i &
-sh client.sh $i &
+curl --limit-rate $LIMIT -F pouet=@$FILE $1?X-Progress-ID=$i &
+sh client.sh $i $2 &
 i=`expr $i + 1`
 echo "Upload $i"
-curl --limit-rate $LIMIT -F pouet=@$FILE http://172.16.10.67/upload.html?X-Progress-ID=$i &
-sh client.sh $i &
+curl --limit-rate $LIMIT -F pouet=@$FILE $1?X-Progress-ID=$i &
+sh client.sh $i $2 &
 i=`expr $i + 1`
 echo "Upload $i"
-curl --limit-rate $LIMIT -F pouet=@$FILE http://172.16.10.67/upload.html?X-Progress-ID=$i &
-sh client.sh $i &
+curl --limit-rate $LIMIT -F pouet=@$FILE $1?X-Progress-ID=$i &
+sh client.sh $i $2 &
 done
 
 wait
