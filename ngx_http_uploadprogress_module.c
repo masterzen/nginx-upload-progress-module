@@ -44,6 +44,7 @@ typedef struct {
     ngx_event_t                      cleanup;
     ngx_http_handler_pt              handler;
     u_char                           track;
+    ngx_str_t                        content_type;
 } ngx_http_uploadprogress_conf_t;
 
 typedef struct {
@@ -86,6 +87,13 @@ static ngx_command_t ngx_http_uploadprogress_commands[] = {
      ngx_http_report_uploads,
      NGX_HTTP_LOC_CONF_OFFSET,
      0,
+     NULL},
+
+    {ngx_string("upload_progress_content_type"),
+     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE1,
+     ngx_conf_set_str_slot,
+     NGX_HTTP_LOC_CONF_OFFSET,
+     offsetof(ngx_http_uploadprogress_conf_t, content_type),
      NULL},
 
     ngx_null_command
@@ -460,8 +468,7 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
 	ngx_free(id);
 
     /* send the output */
-    r->headers_out.content_type.len = sizeof("text/javascript") - 1;
-    r->headers_out.content_type.data = (u_char *) "text/javascript";
+    r->headers_out.content_type = upcf->content_type;
 
     /* force no-cache */
     expires = r->headers_out.expires;
@@ -1126,6 +1133,8 @@ ngx_http_uploadprogress_merge_loc_conf(ngx_conf_t * cf, void *parent, void *chil
     if (conf->shm_zone == NULL) {
         *conf = *prev;
     }
+
+    ngx_conf_merge_str_value(conf->content_type, prev->content_type, "text/javascript");
 
     return NGX_CONF_OK;
 }
