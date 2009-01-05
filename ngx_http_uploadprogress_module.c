@@ -10,6 +10,20 @@
 
 #define TIMER_FREQUENCY 15 * 1000
 
+typedef enum {
+    uploadprogress_state_starting = 0,
+    uploadprogress_state_error = 1, 
+    uploadprogress_state_done = 2, 
+    uploadprogress_state_uploading = 3, 
+    uploadprogress_state_none
+} ngx_http_uploadprogress_state_t; 
+
+typedef struct {
+    ngx_str_t                           name;
+    ngx_http_uploadprogress_state_t     idx;
+    ngx_str_t                           def;
+} ngx_http_uploadprogress_state_map_t;
+
 typedef struct ngx_http_uploadprogress_node_s ngx_http_uploadprogress_node_t;
 
 struct ngx_http_uploadprogress_node_s {
@@ -39,12 +53,18 @@ typedef struct {
 } ngx_http_uploadprogress_ctx_t;
 
 typedef struct {
+    ngx_array_t                     *values;
+    ngx_array_t                     *lengths;
+} ngx_http_uploadprogress_template_t;
+
+typedef struct {
     ngx_shm_zone_t                  *shm_zone;
     time_t                           timeout;
     ngx_event_t                      cleanup;
     ngx_http_handler_pt              handler;
     u_char                           track;
     ngx_str_t                        content_type;
+    ngx_array_t                      templates;
 } ngx_http_uploadprogress_conf_t;
 
 typedef struct {
@@ -61,6 +81,7 @@ static char *ngx_http_uploadprogress_merge_loc_conf(ngx_conf_t *cf, void *parent
 static char *ngx_http_track_uploads(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
 static char *ngx_http_report_uploads(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
 static char *ngx_http_upload_progress(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
+static char* ngx_http_upload_progress_template(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
 static void ngx_clean_old_connections(ngx_event_t * ev);
 static ngx_int_t ngx_http_uploadprogress_content_handler(ngx_http_request_t *r);
 
@@ -94,6 +115,13 @@ static ngx_command_t ngx_http_uploadprogress_commands[] = {
      ngx_conf_set_str_slot,
      NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(ngx_http_uploadprogress_conf_t, content_type),
+     NULL},
+
+    {ngx_string("upload_progress_template"),
+     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE2,
+     ngx_http_upload_progress_template,
+     NGX_HTTP_LOC_CONF_OFFSET,
+     offsetof(ngx_http_uploadprogress_conf_t, templates),
      NULL},
 
     ngx_null_command
@@ -131,6 +159,22 @@ ngx_module_t                     ngx_http_uploadprogress_module = {
 };
 
 static ngx_str_t x_progress_id = ngx_string("X-Progress-ID");
+
+static ngx_http_uploadprogress_state_map_t ngx_http_uploadprogress_state_map[] = {
+    {ngx_string("starting"),  uploadprogress_state_starting,
+     ngx_string("new Object({ 'state' : 'starting' })\r\n")},
+
+    {ngx_string("error"),     uploadprogress_state_error,
+     ngx_string("new Object({ 'state' : 'error', 'status' : $uploadprogress_status })\r\n")},
+
+    {ngx_string("done"),      uploadprogress_state_done,
+     ngx_string("new Object({ 'state' : 'done' })\r\n")},
+
+    {ngx_string("uploading"), uploadprogress_state_uploading,
+     ngx_string("new Object({ 'state' : 'uploading', 'received' : $uploadprogress_received, 'size' : $uploadprogress_length })\r\n")},
+};
+
+static ngx_array_t ngx_http_uploadprogress_global_templates;
 
 static ngx_str_t*
 get_tracking_id(ngx_http_request_t * r)
@@ -400,10 +444,10 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
 static ngx_int_t
 ngx_http_reportuploads_handler(ngx_http_request_t * r)
 {
-    ngx_str_t                       *id;
+    ngx_str_t                       *id, response;
     ngx_buf_t                       *b;
     ngx_chain_t                      out;
-    ngx_int_t                        rc, size, found=0, done=0, err_status=0;
+    ngx_int_t                        rc, found=0, done=0, err_status=0;
     off_t                            rest=0, length=0;
     ngx_uint_t                       len, i;
     ngx_slab_pool_t                 *shpool;
@@ -411,6 +455,8 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
     ngx_http_uploadprogress_ctx_t   *ctx;
     ngx_http_uploadprogress_node_t  *up;
     ngx_table_elt_t                 *expires, *cc, **ccp;
+    ngx_http_uploadprogress_state_t  state;
+    ngx_http_uploadprogress_template_t  *t;
 
     if (r->method != NGX_HTTP_GET && r->method != NGX_HTTP_HEAD) {
         return NGX_HTTP_NOT_ALLOWED;
@@ -549,55 +595,42 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
  */
 
     if (!found) {
-        size = sizeof("new Object({ 'state' : 'starting' })\r\n");
+        state = uploadprogress_state_starting;
     } else if (err_status >= NGX_HTTP_SPECIAL_RESPONSE) {
-        size = sizeof("new Object({ 'state' : 'error', 'status' : ") + NGX_INT_T_LEN + sizeof(" })\r\n");
+        state = uploadprogress_state_error;
     } else if (done) {
-        size = sizeof("new Object({ 'state' : 'done' })\r\n");
+        state = uploadprogress_state_done;
     } else if ( length == 0 && rest == 0 ) {
-        size = sizeof("new Object({ 'state' : 'starting' })\r\n");
+        state = uploadprogress_state_starting;
     } else {
-        size = sizeof("new Object({ 'state' : 'uploading', 'received' : ") + NGX_INT_T_LEN + sizeof(" })\r\n");
-        size += sizeof(", 'size' : ") + NGX_INT_T_LEN;
+        state = uploadprogress_state_uploading;
     }
 
-    b = ngx_create_temp_buf(r->pool, size);
+    t = upcf->templates.elts;
+
+    if (ngx_http_script_run(r, &response, t[(ngx_uint_t)state].lengths->elts, 0,
+        t[(ngx_uint_t)state].values->elts) == NULL)
+    {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+        "upload progress: state=%d, err_status=%ui, remaining=%uO, length=%uO",
+        state, err_status, (length - rest), length);
+
+    b = ngx_calloc_buf(r->pool);
     if (b == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
+    b->pos = b->start = response.data;
+    b->last = b->end = response.data + response.len;
+
+    b->temporary = 1;
+    b->memory = 1;
+
     out.buf = b;
     out.next = NULL;
-
-    if (!found) {
-        b->last = ngx_cpymem(b->last, "new Object({ 'state' : 'starting' })\r\n",
-                            sizeof("new Object({ 'state' : 'starting' })\r\n") - 1);
-        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "reportuploads returning starting");
-    } else if (err_status >= NGX_HTTP_SPECIAL_RESPONSE) {
-        b->last = ngx_cpymem(b->last, "new Object({ 'state' : 'error', 'status' : ",
-                             sizeof("new Object({ 'state' : 'error', 'status' : ") - 1);
-        b->last = ngx_sprintf(b->last, "%ui })\r\n", err_status );
-        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                        "reportuploads returning error condition: %ui", err_status);
-    } else if (done) {
-        b->last = ngx_cpymem(b->last, "new Object({ 'state' : 'done' })\r\n",
-                             sizeof("new Object({ 'state' : 'done' })\r\n") - 1);
-        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                        "reportuploads returning done");
-    } else if (length == 0 && rest == 0) {
-        b->last = ngx_cpymem(b->last, "new Object({ 'state' : 'starting' })\r\n",
-                            sizeof("new Object({ 'state' : 'starting' })\r\n") - 1);
-        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "reportuploads returning starting");
-    } else {
-        b->last = ngx_cpymem(b->last, "new Object({ 'state' : 'uploading', 'received' : ",
-                             sizeof("new Object({ 'state' : 'uploading', 'received' : ") - 1);
-
-        b->last = ngx_sprintf(b->last, "%uO, 'size' : %uO })\r\n", (length - rest), length);
-
-        ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                        "reportuploads returning %uO / %uO",(length - rest), length );
-    }
-
 
     r->headers_out.status = NGX_HTTP_OK;
     r->headers_out.content_length_n = b->last - b->pos;
@@ -1087,6 +1120,10 @@ ngx_http_uploadprogress_init(ngx_conf_t * cf)
 {
     ngx_http_handler_pt             *h;
     ngx_http_core_main_conf_t       *cmcf;
+    ngx_http_uploadprogress_template_t   *t;
+    ngx_http_uploadprogress_state_map_t  *m;
+    ngx_http_script_compile_t             sc;
+    ssize_t                               n;
 
     cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
 
@@ -1108,6 +1145,37 @@ ngx_http_uploadprogress_init(ngx_conf_t * cf)
     ngx_http_next_header_filter = ngx_http_top_header_filter;
     ngx_http_top_header_filter = ngx_http_uploadprogress_errortracker;
 
+    /*
+     * Compile global templates
+     */
+    if(ngx_array_init(&ngx_http_uploadprogress_global_templates, cf->pool, 4,
+        sizeof(ngx_http_uploadprogress_template_t)) != NGX_OK) {
+        return NGX_ERROR;
+    }
+
+    m = ngx_http_uploadprogress_state_map;
+    t = ngx_http_uploadprogress_global_templates.elts;
+
+    while(m->name.data != NULL) {
+        n = ngx_http_script_variables_count(&m->def);
+
+        ngx_memzero(&sc, sizeof(ngx_http_script_compile_t));
+
+        sc.cf = cf;
+        sc.source = &m->def;
+        sc.lengths = &t->lengths;
+        sc.values = &t->values;
+        sc.variables = n;
+        sc.complete_lengths = 1;
+        sc.complete_values = 1;
+
+        if (ngx_http_script_compile(&sc) != NGX_OK) {
+            return NGX_ERROR;
+        }
+        
+        m++;
+    }
+
     return NGX_OK;
 }
 
@@ -1115,11 +1183,24 @@ static void*
 ngx_http_uploadprogress_create_loc_conf(ngx_conf_t * cf)
 {
     ngx_http_uploadprogress_conf_t  *conf;
+    ngx_http_uploadprogress_template_t   *t;
+    ngx_uint_t                            i;
 
     conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_uploadprogress_conf_t));
     if (conf == NULL) {
         return NGX_CONF_ERROR;
     }
+
+    if(ngx_array_init(&conf->templates, cf->pool, 4, sizeof(ngx_http_uploadprogress_template_t)) != NGX_OK) {
+        return NGX_CONF_ERROR;
+    }
+
+    t = conf->templates.elts;
+    for(i = 0;i < conf->templates.nelts; i++) {
+        t[i].values = NULL;
+        t[i].lengths = NULL;
+    } 
+
     return conf;
 }
 
@@ -1129,12 +1210,31 @@ ngx_http_uploadprogress_merge_loc_conf(ngx_conf_t * cf, void *parent, void *chil
 {
     ngx_http_uploadprogress_conf_t  *prev = parent;
     ngx_http_uploadprogress_conf_t  *conf = child;
+    ngx_http_uploadprogress_template_t   *t, *pt, *gt;
+    ngx_uint_t                            i;
 
     if (conf->shm_zone == NULL) {
         *conf = *prev;
     }
 
     ngx_conf_merge_str_value(conf->content_type, prev->content_type, "text/javascript");
+
+    t = conf->templates.elts;
+    pt = prev->templates.elts;
+    gt = ngx_http_uploadprogress_global_templates.elts;
+
+    for(i = 0;i < conf->templates.nelts; i++) {
+        if(t[i].values == NULL) {
+            if(pt[i].values == NULL) {
+                t[i].values = gt[i].values;
+                t[i].lengths = gt[i].lengths;
+            }
+            else{
+                t[i].values = pt[i].values;
+                t[i].lengths = pt[i].lengths;
+            }
+        }
+    } 
 
     return NGX_CONF_OK;
 }
@@ -1287,3 +1387,53 @@ ngx_http_report_uploads(ngx_conf_t * cf, ngx_command_t * cmd, void *conf)
 
     return NGX_CONF_OK;
 }
+
+static char*
+ngx_http_upload_progress_template(ngx_conf_t * cf, ngx_command_t * cmd, void *conf)
+{
+    ngx_http_uploadprogress_conf_t       *upcf = conf;
+    ssize_t                               n;
+    ngx_str_t                            *value;
+    ngx_http_uploadprogress_state_map_t  *m;
+    ngx_http_uploadprogress_template_t   *t;
+    ngx_http_script_compile_t             sc;
+
+    value = cf->args->elts;
+
+    m = ngx_http_uploadprogress_state_map;
+
+    while(m->name.data != NULL) {
+        if((value[1].len == m->name.len && !ngx_strncmp(value[1].data, m->name.data, m->name.len))
+           || (value[1].len == 2 && !ngx_strncmp(value[1].data, m->name.data, 2))) {
+            break;
+        }
+        m++;
+    }
+
+    if (m->name.data == NULL) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "unknown state \"%V\"", &value[1]);
+        return NGX_CONF_ERROR;
+    }
+
+    t = (ngx_http_uploadprogress_template_t*)upcf->templates.elts + (ngx_uint_t)m->idx;
+
+    n = ngx_http_script_variables_count(&value[2]);
+
+    ngx_memzero(&sc, sizeof(ngx_http_script_compile_t));
+
+    sc.cf = cf;
+    sc.source = &value[2];
+    sc.lengths = &t->lengths;
+    sc.values = &t->values;
+    sc.variables = n;
+    sc.complete_lengths = 1;
+    sc.complete_values = 1;
+
+    if (ngx_http_script_compile(&sc) != NGX_OK) {
+        return NGX_CONF_ERROR;
+    }
+
+    return NGX_CONF_OK;
+}
+
