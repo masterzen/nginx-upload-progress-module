@@ -64,6 +64,7 @@ typedef struct {
     u_char                           track;
     ngx_str_t                        content_type;
     ngx_array_t                      templates;
+    ngx_str_t                        header;
 } ngx_http_uploadprogress_conf_t;
 
 typedef struct {
@@ -131,6 +132,13 @@ static ngx_command_t ngx_http_uploadprogress_commands[] = {
      0,
      NULL},
 
+    {ngx_string("upload_progress_header"),
+     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE1,
+     ngx_conf_set_str_slot,
+     NGX_HTTP_LOC_CONF_OFFSET,
+     offsetof(ngx_http_uploadprogress_conf_t, header),
+     NULL},
+
     ngx_null_command
 };
 
@@ -165,8 +173,6 @@ ngx_module_t                     ngx_http_uploadprogress_module = {
     NGX_MODULE_V1_PADDING
 };
 
-static ngx_str_t x_progress_id = ngx_string("X-Progress-ID");
-
 static ngx_http_uploadprogress_state_map_t ngx_http_uploadprogress_state_map[] = {
     {ngx_string("starting"),  uploadprogress_state_starting},
     {ngx_string("error"),     uploadprogress_state_error},
@@ -198,6 +204,9 @@ get_tracking_id(ngx_http_request_t * r)
     ngx_list_part_t                 *part;
     ngx_table_elt_t                 *header;
     ngx_str_t                       *ret, args;
+    ngx_http_uploadprogress_conf_t  *upcf;
+
+    upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "upload-progress: get_tracking_id");
 
@@ -216,8 +225,8 @@ get_tracking_id(ngx_http_request_t * r)
             i = 0;
         }
 
-        if (header[i].key.len == x_progress_id.len
-            && ngx_strncasecmp(header[i].key.data, x_progress_id.data,
+        if (header[i].key.len == upcf->header.len
+            && ngx_strncasecmp(header[i].key.data, upcf->header.data,
                            header[i].key.len) == 0) {
             ret = ngx_calloc(sizeof(ngx_str_t), r->connection->log );
             ret->data = header[i].value.data;
@@ -1253,6 +1262,8 @@ ngx_http_uploadprogress_merge_loc_conf(ngx_conf_t * cf, void *parent, void *chil
             }
         }
     } 
+
+    ngx_conf_merge_str_value(conf->header, prev->header, "X-Progress-ID");
 
     return NGX_CONF_OK;
 }
