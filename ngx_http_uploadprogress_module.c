@@ -1466,7 +1466,7 @@ ngx_http_upload_progress_json_output(ngx_conf_t * cf, ngx_command_t * cmd, void 
     ngx_http_uploadprogress_conf_t       *upcf = conf;
     ngx_http_uploadprogress_template_t   *t;
     ngx_uint_t                            i;
-    static char*                          rc;
+    char*                                 rc;
 
     t = (ngx_http_uploadprogress_template_t*)upcf->templates.elts;
 
