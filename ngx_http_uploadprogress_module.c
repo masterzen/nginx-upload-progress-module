@@ -429,7 +429,8 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, ngx_cycle->log, 0,
                        "upload-progress: read_event_handler found node: %V", id);
         up->rest = r->request_body->rest;
-        up->length = r->headers_in.content_length_n;
+        if(up->length == 0)
+            up->length = r->headers_in.content_length_n;
         ngx_log_debug3(NGX_LOG_DEBUG_HTTP, ngx_cycle->log, 0,
                        "upload-progress: read_event_handler storing rest %uO/%uO for %V", up->rest, up->length, id);
     } else {
