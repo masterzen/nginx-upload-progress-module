@@ -78,6 +78,15 @@ static ngx_int_t ngx_http_uploadprogress_init_zone(ngx_shm_zone_t * shm_zone, vo
 static ngx_int_t ngx_http_uploadprogress_init(ngx_conf_t * cf);
 static void *ngx_http_uploadprogress_create_loc_conf(ngx_conf_t *cf);
 static char *ngx_http_uploadprogress_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child);
+static ngx_int_t ngx_http_uploadprogress_add_variables(ngx_conf_t *cf);
+
+static ngx_int_t ngx_http_uploadprogress_received_variable(ngx_http_request_t *r,
+    ngx_http_variable_value_t *v, uintptr_t data);
+static ngx_int_t ngx_http_uploadprogress_offset_variable(ngx_http_request_t *r,
+    ngx_http_variable_value_t *v, uintptr_t data);
+static ngx_int_t ngx_http_uploadprogress_status_variable(ngx_http_request_t *r,
+    ngx_http_variable_value_t *v, uintptr_t data);
+
 static char *ngx_http_track_uploads(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
 static char *ngx_http_report_uploads(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
 static char *ngx_http_upload_progress(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
@@ -142,9 +151,29 @@ static ngx_command_t ngx_http_uploadprogress_commands[] = {
     ngx_null_command
 };
 
+static ngx_http_variable_t  ngx_http_uploadprogress_variables[] = {
+
+    { ngx_string("uploadprogress_received"), NULL, ngx_http_uploadprogress_received_variable,
+      (uintptr_t) offsetof(ngx_http_uploadprogress_node_t, rest),
+      NGX_HTTP_VAR_CHANGEABLE|NGX_HTTP_VAR_NOCACHEABLE|NGX_HTTP_VAR_NOHASH, 0 },
+
+    { ngx_string("uploadprogress_remaining"), NULL, ngx_http_uploadprogress_offset_variable,
+      (uintptr_t) offsetof(ngx_http_uploadprogress_node_t, rest),
+      NGX_HTTP_VAR_CHANGEABLE|NGX_HTTP_VAR_NOCACHEABLE|NGX_HTTP_VAR_NOHASH, 0 },
+
+    { ngx_string("uploadprogress_length"), NULL, ngx_http_uploadprogress_offset_variable,
+      (uintptr_t) offsetof(ngx_http_uploadprogress_node_t, length),
+      NGX_HTTP_VAR_CHANGEABLE|NGX_HTTP_VAR_NOCACHEABLE|NGX_HTTP_VAR_NOHASH, 0 },
+
+    { ngx_string("uploadprogress_status"), NULL, ngx_http_uploadprogress_status_variable,
+      (uintptr_t) offsetof(ngx_http_uploadprogress_node_t, err_status),
+      NGX_HTTP_VAR_CHANGEABLE|NGX_HTTP_VAR_NOCACHEABLE|NGX_HTTP_VAR_NOHASH, 0 },
+
+    { ngx_null_string, NULL, NULL, 0, 0, 0 }
+};
 
 static ngx_http_module_t         ngx_http_uploadprogress_module_ctx = {
-    NULL,                       /* preconfiguration */
+    ngx_http_uploadprogress_add_variables,      /* preconfiguration */
     ngx_http_uploadprogress_init,       /* postconfiguration */
 
     NULL,                       /* create main configuration */
@@ -608,6 +637,8 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
             return rc;
         }
     }
+
+    ngx_http_set_ctx(r, up, ngx_http_uploadprogress_module);
 
 /*
  There are 4 possibilities
@@ -1268,6 +1299,23 @@ ngx_http_uploadprogress_merge_loc_conf(ngx_conf_t * cf, void *parent, void *chil
     return NGX_CONF_OK;
 }
 
+static ngx_int_t
+ngx_http_uploadprogress_add_variables(ngx_conf_t *cf)
+{
+    ngx_http_variable_t  *var, *v;
+
+    for (v = ngx_http_uploadprogress_variables; v->name.len; v++) {
+        var = ngx_http_add_variable(cf, &v->name, v->flags);
+        if (var == NULL) {
+            return NGX_ERROR;
+        }
+
+        var->get_handler = v->get_handler;
+        var->data = v->data;
+    }
+
+    return NGX_OK;
+}
 
 static char*
 ngx_http_upload_progress(ngx_conf_t * cf, ngx_command_t * cmd, void *conf)
@@ -1493,5 +1541,81 @@ ngx_http_upload_progress_json_output(ngx_conf_t * cf, ngx_command_t * cmd, void 
     upcf->content_type.len = sizeof("application/json") - 1;
 
     return NGX_CONF_OK;
+}
+
+static ngx_int_t ngx_http_uploadprogress_received_variable(ngx_http_request_t *r,
+    ngx_http_variable_value_t *v, uintptr_t data)
+{
+    ngx_http_uploadprogress_node_t  *up;
+    u_char                          *p;
+    off_t                           *value;
+
+    up = ngx_http_get_module_ctx(r, ngx_http_uploadprogress_module);
+
+    value = (off_t *) ((char *) up + data);
+
+    p = ngx_palloc(r->pool, NGX_OFF_T_LEN);
+    if (p == NULL) {
+        return NGX_ERROR;
+    }
+
+    v->len = ngx_sprintf(p, "%O", up->length - *value) - p;
+    v->valid = 1;
+    v->no_cacheable = 0;
+    v->not_found = 0;
+    v->data = p;
+
+    return NGX_OK;
+}
+
+static ngx_int_t ngx_http_uploadprogress_offset_variable(ngx_http_request_t *r,
+    ngx_http_variable_value_t *v, uintptr_t data)
+{
+    ngx_http_uploadprogress_node_t  *up;
+    u_char                          *p;
+    off_t                           *value;
+
+    up = ngx_http_get_module_ctx(r, ngx_http_uploadprogress_module);
+
+    value = (off_t *) ((char *) up + data);
+
+    p = ngx_palloc(r->pool, NGX_OFF_T_LEN);
+    if (p == NULL) {
+        return NGX_ERROR;
+    }
+
+    v->len = ngx_sprintf(p, "%O", *value) - p;
+    v->valid = 1;
+    v->no_cacheable = 0;
+    v->not_found = 0;
+    v->data = p;
+
+    return NGX_OK;
+}
+
+static ngx_int_t
+ngx_http_uploadprogress_status_variable(ngx_http_request_t *r,
+    ngx_http_variable_value_t *v,  uintptr_t data)
+{
+    ngx_http_uploadprogress_node_t  *up;
+    u_char                          *p;
+    off_t                           *value;
+
+    up = ngx_http_get_module_ctx(r, ngx_http_uploadprogress_module);
+
+    value = (off_t *) ((char *) up + data);
+
+    p = ngx_palloc(r->pool, NGX_OFF_T_LEN);
+    if (p == NULL) {
+        return NGX_ERROR;
+    }
+
+    v->len = ngx_sprintf(p, "%O", *value) - p;
+    v->valid = 1;
+    v->no_cacheable = 0;
+    v->not_found = 0;
+    v->data = p;
+
+    return NGX_OK;
 }
 
