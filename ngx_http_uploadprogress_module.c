@@ -1482,7 +1482,7 @@ ngx_http_upload_progress_json_output(ngx_conf_t * cf, ngx_command_t * cmd, void 
     t = (ngx_http_uploadprogress_template_t*)upcf->templates.elts;
 
     for(i = 0;i < upcf->templates.nelts;i++) {
-        rc = ngx_http_upload_progress_set_template(cf, t, ngx_http_uploadprogress_json_defaults + i);
+        rc = ngx_http_upload_progress_set_template(cf, t + i, ngx_http_uploadprogress_json_defaults + i);
 
         if(rc != NGX_CONF_OK) {
             return rc;
