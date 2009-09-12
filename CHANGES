@@ -1,3 +1,8 @@
+nginx_upload_progress release 0.6                                  12 Sep 2009
+
+ * fixed node corruption when cleaning uploads (thanks to Vladimir 
+   Getmanshchuk for his detailed report)
+
 nginx_upload_progress release 0.5                                  28 Jun 2008
 
  * fixed progress probes returning "done" when upload was still in progress
