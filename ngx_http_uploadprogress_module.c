@@ -131,7 +131,7 @@ get_tracking_id(ngx_http_request_t * r)
     ngx_uint_t                       i;
     ngx_list_part_t                 *part;
     ngx_table_elt_t                 *header;
-    ngx_str_t                       *ret;
+    ngx_str_t                       *ret, args;
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "upload-progress: get_tracking_id");
 
@@ -165,14 +165,19 @@ get_tracking_id(ngx_http_request_t * r)
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
                     "upload-progress: get_tracking_id no header found");
 
-    /* not found, check as a reaquest arg */
-    if (r->args.len) {
+    /* not found, check as a request arg */
+    /* it is possible the request args have not been yet created (or already released) */
+    /* so let's try harder first from the request line */
+    args.len =  r->args.len;
+    args.data = r->args.data;
+    
+    if (args.len && args.data) {
         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
-                       "upload-progress: get_tracking_id no header found but args present");
+                       "upload-progress: get_tracking_id no header found, args found");
         i = 0;
-        p = r->args.data;
+        p = args.data;
         do {
-            ngx_uint_t len = r->args.len - (p - r->args.data);
+            ngx_uint_t len = args.len - (p - args.data);
             if (len >= 14 && ngx_strncasecmp(p, (u_char*)"X-Progress-ID=", 14) == 0) {
               ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
                              "upload-progress: get_tracking_id found args: %s",p);
@@ -186,7 +191,7 @@ get_tracking_id(ngx_http_request_t * r)
 
         if (i) {
             start_p = p += 14;
-            while (p < r->args.data + r->args.len) {
+            while (p < args.data + args.len) {
                 if (*p++ != '&') {
                     continue;
                 }
@@ -321,12 +326,17 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
 
     /* find node, update rest */
     oldid = id = get_tracking_id(r);
-    
+
+    if (id == NULL) {
+        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, ngx_cycle->log, 0,
+                       "upload-progress: read_event_handler cant find id");
+        return;
+    }
+
     /* perform a deep copy of id */
     id = ngx_http_uploadprogress_strdup(id, r->connection->log);
-    
     ngx_free(oldid);
-		
+
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "upload-progress: read_event_handler found id: %V", id);
     upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
@@ -334,18 +344,19 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
     
     /* call the original read event handler */
     module_ctx = ngx_http_get_module_ctx(r, ngx_http_uploadprogress_module);
-    module_ctx->read_event_handler(r);
+    if (module_ctx != NULL ) {
+        module_ctx->read_event_handler(r);
+    }
 
     /* at this stage, r is not anymore safe to use */
     /* the request could have been closed/freed behind our back */
     /* and thats the same issue with any other material that was allocated in the request pool */
     /* that's why we duplicate id afterward */
 
-    if (id == NULL) {
-        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, ngx_cycle->log, 0,
-                       "upload-progress: read_event_handler cant find id");
-        return;
-    }
+    /* it's also possible that the id was null if we got a spurious (like abort) read */
+    /* event. In this case we still have called the original read event handler */
+    /* but we have to bail out, because we won't ever be able to find our upload node */
+
 
     if (shm_zone == NULL) {
         ngx_http_uploadprogress_strdupfree(id);
