@@ -1,7 +1,6 @@
 Nginx Upload Progress Module
 ============================
 
-
 Introduction
 ============
 
@@ -9,7 +8,9 @@ nginx_uploadprogress_module is an implementation of an upload progress system, t
 RFC1867 POST upload as they are transmitted to upstream servers.
 
 It works by tracking the uploads proxied by Nginx to upstream servers without 
-analysing the uploaded content and offers a web API to report upload progress in JSON format.
+analysing the uploaded content and offers a web API to report upload progress in Javscript, Json or any
+other format (through the help of templates).
+
 It works because Nginx acts as an accelerator of an upstream server, storing uploaded POST content
 on disk, before transmitting it to the upstream server. Each individual POST upload request
 should contain a progress unique identifier.
@@ -22,10 +23,7 @@ The JSON idea and the mechanism idea are based on Lighttpd mod_uploadprogress:
 http://blog.lighttpd.net/articles/2006/08/01/mod_uploadprogress-is-back
 
 
-WARNINGS: 
- * this software has never been tested under load. It only passed a few stress lab tests (like
-20 or so parallels upload and many progress probes).
- * it is not intended to be deployed on *production systems*.
+WARNING: 
  * when compiled with --with-debug, this module will produce high number of log messages.
 
 
@@ -60,84 +58,139 @@ This identifier can be transmitted either as a GET argument or as an HTTP header
 
 upload_progress
 +++++++++++++++
-	:Syntax: upload_progress <zone_name> <zone_size>
-	:Default: none
-	:Context: http
-	:Description:
-	This directive enables the upload progress module and reserve <zone_size> bytes to the <zone_name> which
-	will be used to store the per-connection tracking information.
-	
+    :Syntax: upload_progress <zone_name> <zone_size>
+    :Default: none
+    :Context: http
+    :Description:
+    This directive enables the upload progress module and reserve <zone_size> bytes to the <zone_name> which
+    will be used to store the per-connection tracking information.
+    
 track_uploads
 +++++++++++++
-	:Syntax: track_uploads <zone_name> <timeout>
-	:Default: none
-	:Context: location
-	:Description:
-	This directive enables tracking uploads for the current location. Each POST landing in this location will register
-	the request in the <zone_name> upload progress tracker.
-	Since Nginx doesn't support yet RFC 1867 upload, the location must be a proxy_pass or fastcgi location.
-	The POST _must_ have a query parameter called X-Progress-ID (or an HTTP header of the same name) whose value is the
-	unique identifier used to get progress information. If the POST has no such information, the upload will not be tracked.
-	The tracked connections are kept at most <timeout> seconds after they have been finished to be able to serve 
-	unseful information to upload progress probes.
-  	WARNING: this directive must be the last directive of the location. It must be in a proxy_pass or 
-	fastcgi_pass location.
-	
+    :Syntax: track_uploads <zone_name> <timeout>
+    :Default: none
+    :Context: location
+    :Description:
+    This directive enables tracking uploads for the current location. Each POST landing in this location will register
+    the request in the <zone_name> upload progress tracker.
+    Since Nginx doesn't support yet RFC 1867 upload, the location must be a proxy_pass or fastcgi location.
+    The POST _must_ have a query parameter called X-Progress-ID (or an HTTP header of the same name) whose value is the
+    unique identifier used to get progress information. If the POST has no such information, the upload will not be tracked.
+    The tracked connections are kept at most <timeout> seconds after they have been finished to be able to serve 
+    unseful information to upload progress probes.
+    WARNING: this directive must be the last directive of the location. It must be in a proxy_pass or 
+    fastcgi_pass location.
+    
 report_uploads
 ++++++++++++++
-	:Syntax: report_uploads <zone_name>
-	:Default: none
-	:Context: location
-	:Description:
-	This directive allows a location to report the upload progress that is tracked by track_uploads for <zone_name>.
-	The returned document is a JSON text with the possible 4 results:
-	  * the upload request hasn't been registered yet or is unknown:			 
-				new Object({ 'state' : 'starting' })
-				
-		* the upload request has ended:
-				new Object({ 'state' : 'done' })
-		
-		* the upload request generated an HTTP error
-				new Object({ 'state' : 'error', 'status' : <error code> })
-			one error code that can be of use to track for the client is 413 (request entity too large).
-		
-		* the upload request is in progress:
-				new Object({ 'state' : 'uploading', 'received' : <size_received>, 'size' : <total_size>})
-				
-	The HTTP request to this location must have a X-Progress-ID parameter or HTTP header containing a valid
-	unique identifier of an inprogress upload.
-				
+    :Syntax: report_uploads <zone_name>
+    :Default: none
+    :Context: location
+    :Description:
+    This directive allows a location to report the upload progress that is tracked by track_uploads for <zone_name>.
+    The returned document is a Javascript text with the possible 4 results by default:
+      * the upload request hasn't been registered yet or is unknown:             
+                new Object({ 'state' : 'starting' })
+                
+        * the upload request has ended:
+                new Object({ 'state' : 'done' })
+        
+        * the upload request generated an HTTP error
+                new Object({ 'state' : 'error', 'status' : <error code> })
+            one error code that can be of use to track for the client is 413 (request entity too large).
+        
+        * the upload request is in progress:
+                new Object({ 'state' : 'uploading', 'received' : <size_received>, 'size' : <total_size>})
+    
+    It is possible to return pure json instead of this javascript (see upload_progress_json_output).
+    It is also possible to configure completely the response format with the directive:
+            upload_progress_template
+
+    The HTTP request to this location must have a X-Progress-ID parameter or HTTP header containing a valid
+    unique identifier of an inprogress upload.
+
+upload_progress_content_type
+++++++++++++++++++++++++++++
+    :Syntax: upload_progress_content_type <content_type>
+    :Default: text/javascript
+    :Context: location
+    :Description:
+    This directive allows to change the upload progress probe response content-type.
+
+upload_progress_header
+++++++++++++++++++++++
+    :Syntax: upload_progress_header <progress-id>
+    :Default: X-Progress-ID
+    :Context: location
+    :Description:
+    This directive allows to change the header name of the progress ID.
+
+upload_progress_json_output
++++++++++++++++++++++++++++
+    :Syntax: upload_progress_json_output
+    :Default: N/A
+    :Context: location
+    :Description:
+    This directive sets everything to output as pure json.
+
+upload_progress_template
+++++++++++++++++++++++++
+    :Syntax: upload_progress_template <state> <template>
+    :Default: none
+    :Context: location
+    :Description:
+    This directive can be used to install a progress response template.
+    The available list of state is:
+        * starting
+        * uploading
+        * error
+        * done
+
+    Nginx will replace the value of the following variables with their respective
+    value for the upload:
+        * $uploadprogress_length: total size of the upload
+        * $uploadprogress_received: what the server has received so far
+        * $uploadprogress_status: error code in case of HTTP error
+    
+    For instance to return XML (instead of the default Javascript or json):
+
+    upload_progress_content_type 'text/xml';
+    upload_progress_template starting '<upload><state>starting</state></upload>';
+    upload_progress_template uploading '<upload><state>uploading</state><size>$uploadprogress_length</size><uploaded>$uploadprogress_received</uploaded></upload>';
+    upload_progress_template done '<upload><state>done</state></upload>';
+    upload_progress_template error '<upload><state>error</state><code>$uploadprogress_status</code></upload>';
+
 
 Configuration Example:
 +++++++++++++++++++++
 
 http {
-	
-	# reserve 1MB under the name 'proxied' to track uploads
-	upload_progress proxied 1m;
+    
+    # reserve 1MB under the name 'proxied' to track uploads
+    upload_progress proxied 1m;
 
   server {
-		listen       127.0.0.1 default;
-		server_name  _ *;
-		
-		root /path/to/root;
-		
-		location / {
-			# proxy to upstream server
-			proxy_pass http://127.0.0.1;
-			proxy_redirect default;
-			
-			# track uploads in the 'proxied' zone
-			# remember connections for 30s after they finished
-			track_uploads proxied 30s;
-		}
-		
-		location ^~ /progress {
-			# report uploads tracked in the 'proxied' zone
-			report_uploads proxied;
-		}
+        listen       127.0.0.1 default;
+        server_name  _ *;
+        
+        root /path/to/root;
+        
+        location / {
+            # proxy to upstream server
+            proxy_pass http://127.0.0.1;
+            proxy_redirect default;
+            
+            # track uploads in the 'proxied' zone
+            # remember connections for 30s after they finished
+            track_uploads proxied 30s;
+        }
+        
+        location ^~ /progress {
+            # report uploads tracked in the 'proxied' zone
+            report_uploads proxied;
+        }
 }
-	
+    
 
 Usage Example
 =============
@@ -217,8 +270,12 @@ function fetch(uuid) {
  req.send(null);
 }
 
+Companion Software
+==================
 
+This software can also work with Valery Kholodkov' Nginx Upload Module:
+http://www.grid.net.ru/nginx/upload.en.html
 
-
-
+You can also use the following javascript libraries client side:
+http://drogomir.com/blog/2008/6/30/upload-progress-script-with-safari-support
 
