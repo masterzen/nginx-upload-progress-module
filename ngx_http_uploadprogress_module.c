@@ -1240,7 +1240,11 @@ ngx_http_uploadprogress_merge_loc_conf(ngx_conf_t * cf, void *parent, void *chil
     ngx_uint_t                            i;
 
     if (conf->shm_zone == NULL) {
-        *conf = *prev;
+        conf->shm_zone = prev->shm_zone;
+        conf->timeout = prev->timeout;
+        conf->cleanup = prev->cleanup;
+        conf->handler = prev->handler;
+        conf->track = prev->track;
     }
 
     ngx_conf_merge_str_value(conf->content_type, prev->content_type, "text/javascript");
