@@ -1,3 +1,21 @@
+nginx_upload_progress release 0.7                                  21 Nov 2009
+
+ * fixed segfault when uploads are aborted (thanks to Markus Doppelbauer for
+   his bug report)
+
+ * session ID header name is now configurable (thanks to Valery Kholodkov)
+
+ * Added directive to format output as pure json (thanks to Valery Kholodkov)
+
+ * Added directive to format output with configurable template (thanks to 
+   Valery Kholodkov)
+
+ * Added directive to set a probe response content-type (thanks to Valery 
+   Kholodkov)
+
+ * Added upload status variables (needs a status patch) (thanks to Valery 
+   Kholodkov)
+
 nginx_upload_progress release 0.6                                  12 Sep 2009
 
  * fixed node corruption when cleaning uploads (thanks to Vladimir 
