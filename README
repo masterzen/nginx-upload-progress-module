@@ -125,6 +125,14 @@ upload_progress_header
     :Description:
     This directive allows to change the header name of the progress ID.
 
+upload_progress_jsonp_parameter
+++++++++++++++++++++++
+    :Syntax: upload_progress_jsonp_parameter <callback_parameter>
+    :Default: callback
+    :Context: location
+    :Description:
+    This directive allows to change the name of the GET parameter with the jsonp callback name.
+
 upload_progress_json_output
 +++++++++++++++++++++++++++
     :Syntax: upload_progress_json_output
@@ -132,6 +140,14 @@ upload_progress_json_output
     :Context: location
     :Description:
     This directive sets everything to output as pure json.
+
+upload_progress_jsonp_output
++++++++++++++++++++++++++++
+    :Syntax: upload_progress_jsonp_output
+    :Default: N/A
+    :Context: location
+    :Description:
+    This directive sets everything to output as jsonp (like json output, but with callback).
 
 upload_progress_template
 ++++++++++++++++++++++++
@@ -151,6 +167,7 @@ upload_progress_template
         * $uploadprogress_length: total size of the upload
         * $uploadprogress_received: what the server has received so far
         * $uploadprogress_status: error code in case of HTTP error
+        * $uploadprogress_callback: jsonp callback name if provided as a GET query parameter with name 'callback'
     
     For instance to return XML (instead of the default Javascript or json):
 
@@ -160,6 +177,12 @@ upload_progress_template
     upload_progress_template done '<upload><state>done</state></upload>';
     upload_progress_template error '<upload><state>error</state><code>$uploadprogress_status</code></upload>';
 
+    Example of jsonp response:
+
+    upload_progress_template starting "$uploadprogress_callback({ 'state' : 'starting'});";
+    upload_progress_template error "$uploadprogress_callback({ 'state' : 'error', 'status' : $uploadprogress_status });";
+    upload_progress_template done "$uploadprogress_callback({ 'state' : 'done'});";
+    upload_progress_template uploading "$uploadprogress_callback({ 'state' : 'uploading', 'received' : $uploadprogress_received, 'size' : $uploadprogress_length });";
 
 Configuration Example:
 +++++++++++++++++++++

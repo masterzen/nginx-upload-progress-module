@@ -65,6 +65,7 @@ typedef struct {
     ngx_str_t                        content_type;
     ngx_array_t                      templates;
     ngx_str_t                        header;
+    ngx_str_t                        jsonp_parameter;
 } ngx_http_uploadprogress_conf_t;
 
 typedef struct {
@@ -86,12 +87,15 @@ static ngx_int_t ngx_http_uploadprogress_offset_variable(ngx_http_request_t *r,
     ngx_http_variable_value_t *v, uintptr_t data);
 static ngx_int_t ngx_http_uploadprogress_status_variable(ngx_http_request_t *r,
     ngx_http_variable_value_t *v, uintptr_t data);
+static ngx_int_t ngx_http_uploadprogress_callback_variable(ngx_http_request_t *r,
+    ngx_http_variable_value_t *v, uintptr_t data);
 static char* ngx_http_upload_progress_set_template(ngx_conf_t * cf, ngx_http_uploadprogress_template_t *t, ngx_str_t *source);
 static char *ngx_http_track_uploads(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
 static char *ngx_http_report_uploads(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
 static char *ngx_http_upload_progress(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
 static char* ngx_http_upload_progress_template(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
 static char* ngx_http_upload_progress_json_output(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
+static char* ngx_http_upload_progress_jsonp_output(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
 static void ngx_clean_old_connections(ngx_event_t * ev);
 static ngx_int_t ngx_http_uploadprogress_content_handler(ngx_http_request_t *r);
 
@@ -141,11 +145,25 @@ static ngx_command_t ngx_http_uploadprogress_commands[] = {
      0,
      NULL},
 
+    {ngx_string("upload_progress_jsonp_output"),
+     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS,
+     ngx_http_upload_progress_jsonp_output,
+     NGX_HTTP_LOC_CONF_OFFSET,
+     0,
+     NULL},
+
     {ngx_string("upload_progress_header"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE1,
      ngx_conf_set_str_slot,
      NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(ngx_http_uploadprogress_conf_t, header),
+     NULL},
+
+    {ngx_string("upload_progress_jsonp_parameter"),
+     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE1,
+     ngx_conf_set_str_slot,
+     NGX_HTTP_LOC_CONF_OFFSET,
+     offsetof(ngx_http_uploadprogress_conf_t, jsonp_parameter),
      NULL},
 
     ngx_null_command
@@ -167,6 +185,10 @@ static ngx_http_variable_t  ngx_http_uploadprogress_variables[] = {
 
     { ngx_string("uploadprogress_status"), NULL, ngx_http_uploadprogress_status_variable,
       (uintptr_t) offsetof(ngx_http_uploadprogress_node_t, err_status),
+      NGX_HTTP_VAR_CHANGEABLE|NGX_HTTP_VAR_NOCACHEABLE|NGX_HTTP_VAR_NOHASH, 0 },
+
+    { ngx_string("uploadprogress_callback"), NULL, ngx_http_uploadprogress_callback_variable,
+      (uintptr_t) NULL,
       NGX_HTTP_VAR_CHANGEABLE|NGX_HTTP_VAR_NOCACHEABLE|NGX_HTTP_VAR_NOHASH, 0 },
 
     { ngx_null_string, NULL, NULL, 0, 0, 0 }
@@ -223,6 +245,14 @@ static ngx_str_t ngx_http_uploadprogress_json_defaults[] = {
     ngx_string("{ \"state\" : \"done\" }\r\n"),
     ngx_string("{ \"state\" : \"uploading\", \"received\" : $uploadprogress_received, \"size\" : $uploadprogress_length }\r\n")
 };
+
+static ngx_str_t ngx_http_uploadprogress_jsonp_defaults[] = {
+    ngx_string("$uploadprogress_callback({ \"state\" : \"starting\" });\r\n"),
+    ngx_string("$uploadprogress_callback({ \"state\" : \"error\", \"status\" : $uploadprogress_status });\r\n"),
+    ngx_string("$uploadprogress_callback({ \"state\" : \"done\" });\r\n"),
+    ngx_string("$uploadprogress_callback({ \"state\" : \"uploading\", \"received\" : $uploadprogress_received, \"size\" : $uploadprogress_length });\r\n")
+};
+
 
 static ngx_array_t ngx_http_uploadprogress_global_templates;
 
@@ -1267,6 +1297,7 @@ ngx_http_uploadprogress_merge_loc_conf(ngx_conf_t * cf, void *parent, void *chil
     } 
 
     ngx_conf_merge_str_value(conf->header, prev->header, "X-Progress-ID");
+    ngx_conf_merge_str_value(conf->jsonp_parameter, prev->jsonp_parameter, "callback");
 
     return NGX_CONF_OK;
 }
@@ -1546,6 +1577,30 @@ ngx_http_upload_progress_json_output(ngx_conf_t * cf, ngx_command_t * cmd, void 
     return NGX_CONF_OK;
 }
 
+static char*
+ngx_http_upload_progress_jsonp_output(ngx_conf_t * cf, ngx_command_t * cmd, void *conf)
+{
+    ngx_http_uploadprogress_conf_t       *upcf = conf;
+    ngx_http_uploadprogress_template_t   *t;
+    ngx_uint_t                            i;
+    char*                                 rc;
+
+    t = (ngx_http_uploadprogress_template_t*)upcf->templates.elts;
+
+    for(i = 0;i < upcf->templates.nelts;i++) {
+        rc = ngx_http_upload_progress_set_template(cf, t + i, ngx_http_uploadprogress_jsonp_defaults + i);
+
+        if(rc != NGX_CONF_OK) {
+            return rc;
+        }
+    }
+
+    upcf->content_type.data = (u_char*)"application/javascript";
+    upcf->content_type.len = sizeof("application/javascript") - 1;
+
+    return NGX_CONF_OK;
+}
+
 static ngx_int_t ngx_http_uploadprogress_received_variable(ngx_http_request_t *r,
     ngx_http_variable_value_t *v, uintptr_t data)
 {
@@ -1621,4 +1676,57 @@ ngx_http_uploadprogress_status_variable(ngx_http_request_t *r,
 
     return NGX_OK;
 }
+
+static ngx_int_t
+ngx_http_uploadprogress_callback_variable(ngx_http_request_t *r,
+    ngx_http_variable_value_t *v,  uintptr_t data)
+{
+    u_char                          *p, *start_p, *val, prefix[1024];
+    ngx_http_uploadprogress_conf_t  *upcf;
+    u_int                            len;
+
+    upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
+
+    if (r->args.len) {
+        /* '=' has to be appended to avoid matching parameters that have the */
+        /* configured name as a prefix but are longer */
+        ngx_snprintf(prefix, sizeof(prefix) - 1, "%s=", upcf->jsonp_parameter.data);
+        len = upcf->jsonp_parameter.len + 1;
+        prefix[len] = '\0'; /* Force termination of string */
+
+        p = (u_char *) ngx_strstr(r->args.data, prefix);
+
+        if (p) {
+            p += len;
+            start_p = p;
+            while (p < r->args.data + r->args.len) {
+                if (*((p++) + 1) == '&') {
+                    break;
+                }
+            }
+
+            v->len = p - start_p;
+
+            val = ngx_palloc(r->pool, v->len + 1);
+            if (val == NULL) {
+                return NGX_ERROR;
+            }
+
+            ngx_memcpy(val, start_p, v->len);
+            val[v->len] = '\0';
+
+            v->valid = 1;
+            v->no_cacheable = 0;
+            v->not_found = 0;
+            v->data = val;
+        } else {
+            return NGX_ERROR;
+        }
+    } else {
+        return NGX_ERROR;
+    }
+
+    return NGX_OK;
+}
+
 
