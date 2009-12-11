@@ -297,8 +297,8 @@ get_tracking_id(ngx_http_request_t * r)
         if (i) {
             start_p = p += 14;
             while (p < args.data + args.len) {
-                if (*p++ != '&') {
-                    continue;
+                if (*((p++) + 1) == '&') {
+                    break;
                 }
             }
 
