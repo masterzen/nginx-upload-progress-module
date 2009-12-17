@@ -1475,6 +1475,9 @@ ngx_http_upload_progress_set_template(ngx_conf_t * cf, ngx_http_uploadprogress_t
 
     ngx_memzero(&sc, sizeof(ngx_http_script_compile_t));
 
+		t->lengths = NULL;
+		t->values = NULL;
+
     sc.cf = cf;
     sc.source = source;
     sc.lengths = &t->lengths;
