@@ -1,3 +1,13 @@
+nginx_upload_progress release 0.8                                  19 Dec 2009
+
+ * fixed segfault at start on some platforms (reported by Vladimir 
+ Getmanshchuk and Denis Denisenko)
+ 
+ * implemented JSONP output (thanks to Bruno Deferrari)
+ 
+ * X-Progress-ID can now be the last parameter in the request (thanks to
+ Bruno Deferrari)
+ 
 nginx_upload_progress release 0.7                                  21 Nov 2009
 
  * fixed segfault when uploads are aborted (thanks to Markus Doppelbauer for
