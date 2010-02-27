@@ -1,3 +1,9 @@
+nginx_upload_progress release 0.8.1                              27 Feb 2010
+
+ * Fixed find_node so that it can find correctly nodes when there is an
+ hash collision (thanks to Markus Doppelbauer for his detailed bug report
+ and test case).
+ 
 nginx_upload_progress release 0.8                                  19 Dec 2009
 
  * fixed segfault at start on some platforms (reported by Vladimir 

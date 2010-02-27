@@ -390,7 +390,7 @@ find_node(ngx_str_t * id, ngx_http_uploadprogress_ctx_t * ctx, ngx_log_t * log)
 
         } while (node != sentinel && hash == node->key);
 
-        break;
+        /* found a key with unmatching hash (and value), let's keep comparing hashes then */
     }
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0, "upload-progress: can't find node");
     return NULL;
