@@ -313,7 +313,8 @@ get_tracking_id(ngx_http_request_t * r)
         p = args.data;
         do {
             ngx_uint_t len = args.len - (p - args.data);
-            if (len >= 14 && ngx_strncasecmp(p, (u_char*)"X-Progress-ID=", 14) == 0) {
+            if (len >= (upcf->header.len + 1) && ngx_strncasecmp(p, upcf->header.data, upcf->header.len) == 0
+                && p[upcf->header.len] == '=') {
               ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
                              "upload-progress: get_tracking_id found args: %s",p);
                 i = 1;
@@ -325,7 +326,7 @@ get_tracking_id(ngx_http_request_t * r)
         while(p++);
 
         if (i) {
-            start_p = p += 14;
+            start_p = p += upcf->header.len + 1;
             while (p < args.data + args.len) {
                 if (*((p++) + 1) == '&') {
                     break;
