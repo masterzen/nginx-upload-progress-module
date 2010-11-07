@@ -1,3 +1,8 @@
+nginx_upload_progress release 0.8.2                              07 Nov 2010
+
+ * Session ID query string parameter name is now configurable (thanks to 
+ Pierre-Yves Kerembellec)
+ 
 nginx_upload_progress release 0.8.1                              27 Feb 2010
 
  * Fixed find_node so that it can find correctly nodes when there is an
