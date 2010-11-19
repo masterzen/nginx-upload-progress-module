@@ -347,6 +347,40 @@ get_tracking_id(ngx_http_request_t * r)
     return NULL;
 }
 
+
+static void log_node(ngx_rbtree_node_t  *node, ngx_log_t * log)
+{
+    ngx_http_uploadprogress_node_t  *up;
+    up = (ngx_http_uploadprogress_node_t *) node;
+
+    ngx_log_debug4(NGX_LOG_DEBUG_HTTP, log, 0, "upload-progress: find_node %s [%uO/%uO,%d,%d]",up->data,  up->rest, up->length, up->err_status, up->timeout );
+}
+
+static void log_rbtree(ngx_http_uploadprogress_ctx_t * ctx, ngx_log_t * log)
+{
+    ngx_http_uploadprogress_node_t  *up;
+    ngx_rbtree_node_t *node;
+
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0, 
+                   "upload-progress: logging the whole rbtree");
+
+    node = (ngx_rbtree_node_t *) ctx->list_tail.prev;
+    for (;;) {
+        if (node == &ctx->list_head.node) {
+            break;
+        }
+
+        up = (ngx_http_uploadprogress_node_t *) node;
+
+        log_node(node, log);
+        
+        node = (ngx_rbtree_node_t *)up->prev;
+    }
+
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0, 
+                   "upload-progress: end logging the whole rbtree");
+}
+
 static ngx_http_uploadprogress_node_t *
 find_node(ngx_str_t * id, ngx_http_uploadprogress_ctx_t * ctx, ngx_log_t * log)
 {
@@ -358,23 +392,30 @@ find_node(ngx_str_t * id, ngx_http_uploadprogress_ctx_t * ctx, ngx_log_t * log)
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, log, 0, "upload-progress: find_node %V", id);
 
     hash = ngx_crc32_short(id->data, id->len);
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, log, 0, "upload-progress: find_node hash %08XD", hash);
 
     node = ctx->rbtree->root;
     sentinel = ctx->rbtree->sentinel;
 
     while (node != sentinel) {
 
+        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, log, 0, "upload-progress: find_node testing hash %08XD", node->key);
+        log_node(node, log);
+
         if (hash < node->key) {
+            ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0, "upload-progress: find_node going left");
             node = node->left;
             continue;
         }
 
         if (hash > node->key) {
+            ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0, "upload-progress: find_node going right");
             node = node->right;
             continue;
         }
 
         /* hash == node->key */
+        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0, "upload-progress: find_node hash matching");
 
         do {
             up = (ngx_http_uploadprogress_node_t *) node;
@@ -392,6 +433,7 @@ find_node(ngx_str_t * id, ngx_http_uploadprogress_ctx_t * ctx, ngx_log_t * log)
         } while (node != sentinel && hash == node->key);
 
         /* found a key with unmatching hash (and value), let's keep comparing hashes then */
+        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0, "upload-progress: find_node hash not matching anymore");
     }
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0, "upload-progress: can't find node");
     return NULL;
@@ -594,6 +636,7 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
     } else {
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                        "reportuploads not found: %V", id);
+        log_rbtree(ctx,r->connection->log);
     }
     ngx_shmtx_unlock(&shpool->mutex);
 	ngx_free(id);
