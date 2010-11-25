@@ -917,54 +917,36 @@ ngx_http_uploadprogress_rbtree_insert_value(ngx_rbtree_node_t * temp,
                                             ngx_rbtree_node_t * node,
                                             ngx_rbtree_node_t * sentinel)
 {
+    ngx_rbtree_node_t              **p;
     ngx_http_uploadprogress_node_t  *upn, *upnt;
 
     for (;;) {
 
         if (node->key < temp->key) {
 
-            if (temp->left == sentinel) {
-                temp->left = node;
-                break;
-            }
-
-            temp = temp->left;
+            p = &temp->left;
 
         } else if (node->key > temp->key) {
 
-            if (temp->right == sentinel) {
-                temp->right = node;
-                break;
-            }
+            p = &temp->right;
 
-            temp = temp->right;
-
-        } else {                /* node->key == temp->key */
+        } else { /* node->key == temp->key */
 
             upn = (ngx_http_uploadprogress_node_t *) node;
             upnt = (ngx_http_uploadprogress_node_t *) temp;
 
-            if (ngx_memn2cmp(upn->data, upnt->data, upn->len, upnt->len) < 0) {
-
-                if (temp->left == sentinel) {
-                    temp->left = node;
-                    break;
-                }
-
-                temp = temp->left;
-
-            } else {
-
-                if (temp->right == sentinel) {
-                    temp->right = node;
-                    break;
-                }
-
-                temp = temp->right;
-            }
+            p = (ngx_memn2cmp(upn->data, upnt->data, upn->len, upnt->len) < 0)
+                ? &temp->left : &temp->right;
         }
+
+        if (*p == sentinel) {
+            break;
+        }
+
+        temp = *p;
     }
 
+    *p = node;
     node->parent = temp;
     node->left = sentinel;
     node->right = sentinel;
@@ -1216,6 +1198,9 @@ ngx_http_uploadprogress_errortracker(ngx_http_request_t * r)
         ctx->list_head.next = up;
 
         ngx_rbtree_insert(ctx->rbtree, node);
+        
+        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "trackuploads error-tracking: %08XD inserted in rbtree", hash);
 
         /* start the timer if needed */
         if (!upcf->cleanup.timer_set) {
@@ -1224,6 +1209,8 @@ ngx_http_uploadprogress_errortracker(ngx_http_request_t * r)
             upcf->cleanup.log = upcf->shm_zone->shm.log;
             ngx_add_timer(&upcf->cleanup, TIMER_FREQUENCY);
         }
+
+        log_rbtree(ctx,r->connection->log);
 
         ngx_shmtx_unlock(&shpool->mutex);
 
