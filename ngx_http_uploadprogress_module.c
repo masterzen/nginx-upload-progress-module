@@ -34,6 +34,7 @@ struct ngx_http_uploadprogress_node_s {
     time_t                           timeout;
     struct ngx_http_uploadprogress_node_s *prev;
     struct ngx_http_uploadprogress_node_s *next;
+    ngx_log_t                       *log;
     u_char                           len;
     u_char                           data[1];
 };
@@ -870,6 +871,7 @@ ngx_http_uploadprogress_handler(ngx_http_request_t * r)
     up->rest = 0;
     up->length = 0;
     up->timeout = 0;
+    up->log = NULL;
 
     up->next = ctx->list_head.next;
     up->next->prev = up;
@@ -918,12 +920,35 @@ ngx_http_uploadprogress_rbtree_insert_value(ngx_rbtree_node_t * temp,
                                             ngx_rbtree_node_t * sentinel)
 {
      ngx_http_uploadprogress_node_t  *upn, *upnt;
+     ngx_log_t *log = NULL;
+
+     log = ((ngx_http_uploadprogress_node_t *)node)->log;
+
+     if (log != NULL) {
+         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, log, 0,
+                        "upload-progree: rbtree insert %08XD to be inserted", node->key);
+            log_node(node, log);            
+     }     
 
      for (;;) {
 
+         if (log != NULL) {
+             ngx_log_debug2(NGX_LOG_DEBUG_HTTP, log, 0,
+                            "upload-progree: rbtree insert %08XD compared to %08XD", node->key, temp->key);
+            log_node(temp, log);            
+         }     
          if (node->key < temp->key) {
 
+             if (log != NULL) {
+                 ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0,
+                                "upload-progree: rbtree insert going left");
+             }     
+
             if (temp->left == sentinel) {
+                if (log != NULL) {
+                    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0,
+                                   "upload-progree: rbtree insert left end of tree");
+                }     
                 temp->left = node;
                 break;
             }
@@ -932,7 +957,16 @@ ngx_http_uploadprogress_rbtree_insert_value(ngx_rbtree_node_t * temp,
 
         } else if (node->key > temp->key) {
 
+            if (log != NULL) {
+                ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0,
+                               "upload-progree: rbtree insert going right");
+            }     
+
             if (temp->right == sentinel) {
+                if (log != NULL) {
+                    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0,
+                                   "upload-progree: rbtree insert right end of tree");
+                }     
                 temp->right = node;
                 break;
             }
@@ -941,12 +975,25 @@ ngx_http_uploadprogress_rbtree_insert_value(ngx_rbtree_node_t * temp,
 
         } else {                /* node->key == temp->key */
 
+            if (log != NULL) {
+                ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0,
+                               "upload-progree: equal hashes");
+            }     
             upn = (ngx_http_uploadprogress_node_t *) node;
             upnt = (ngx_http_uploadprogress_node_t *) temp;
 
             if (ngx_memn2cmp(upn->data, upnt->data, upn->len, upnt->len) < 0) {
 
+                if (log != NULL) {
+                    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0,
+                                   "upload-progree: rbtree insert eq h node < temp, going left");
+                }     
+
                 if (temp->left == sentinel) {
+                    if (log != NULL) {
+                        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0,
+                                       "upload-progree: rbtree insert end of left");
+                    }     
                     temp->left = node;
                     break;
                 }
@@ -955,7 +1002,15 @@ ngx_http_uploadprogress_rbtree_insert_value(ngx_rbtree_node_t * temp,
 
             } else {
 
+                if (log != NULL) {
+                    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0,
+                                   "upload-progree: rbtree insert eq h node > temp, going right");
+                }     
                 if (temp->right == sentinel) {
+                    if (log != NULL) {
+                        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0,
+                                       "upload-progree: rbtree insert end of right");
+                    }     
                     temp->right = node;
                     break;
                 }
@@ -964,6 +1019,11 @@ ngx_http_uploadprogress_rbtree_insert_value(ngx_rbtree_node_t * temp,
             }
         }
     }
+
+    if (log != NULL) {
+        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, log, 0,
+                       "upload-progree: rbtree insert insert below %08XD", temp->key);
+    }     
     
     node->parent = temp;
     node->left = sentinel;
@@ -1208,6 +1268,7 @@ ngx_http_uploadprogress_errortracker(ngx_http_request_t * r)
         node->key = hash;
         up->len = (u_char) id->len;
         up->err_status = r->err_status;
+        up->log = r->connection->log;
         ngx_memcpy(up->data, id->data, id->len);
 
         up->next = ctx->list_head.next;
@@ -1219,6 +1280,14 @@ ngx_http_uploadprogress_errortracker(ngx_http_request_t * r)
         
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                        "trackuploads error-tracking: %08XD inserted in rbtree", hash);
+
+        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                  "trackuploads error-tracking: checking if %08XD is correctly inserted in rbtree", hash);
+
+        if (find_node(id, ctx, r->connection->log) == NULL) {
+            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                      "trackuploads error-tracking: %08XD hasn't been correctly added, this suggests an rbtree issue", hash);
+        }
 
         /* start the timer if needed */
         if (!upcf->cleanup.timer_set) {
