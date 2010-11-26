@@ -1268,6 +1268,10 @@ ngx_http_uploadprogress_errortracker(ngx_http_request_t * r)
         node->key = hash;
         up->len = (u_char) id->len;
         up->err_status = r->err_status;
+        up->done = 0;
+        up->rest = 0;
+        up->length = 0;
+        up->timeout = 0;
         up->log = r->connection->log;
         ngx_memcpy(up->data, id->data, id->len);
 
