@@ -917,36 +917,54 @@ ngx_http_uploadprogress_rbtree_insert_value(ngx_rbtree_node_t * temp,
                                             ngx_rbtree_node_t * node,
                                             ngx_rbtree_node_t * sentinel)
 {
-    ngx_rbtree_node_t              **p;
-    ngx_http_uploadprogress_node_t  *upn, *upnt;
+     ngx_http_uploadprogress_node_t  *upn, *upnt;
 
-    for (;;) {
+     for (;;) {
 
-        if (node->key < temp->key) {
+         if (node->key < temp->key) {
 
-            p = &temp->left;
+            if (temp->left == sentinel) {
+                temp->left = node;
+                break;
+            }
+
+            temp = temp->left;
 
         } else if (node->key > temp->key) {
 
-            p = &temp->right;
+            if (temp->right == sentinel) {
+                temp->right = node;
+                break;
+            }
 
-        } else { /* node->key == temp->key */
+            temp = temp->right;
+
+        } else {                /* node->key == temp->key */
 
             upn = (ngx_http_uploadprogress_node_t *) node;
             upnt = (ngx_http_uploadprogress_node_t *) temp;
 
-            p = (ngx_memn2cmp(upn->data, upnt->data, upn->len, upnt->len) < 0)
-                ? &temp->left : &temp->right;
-        }
+            if (ngx_memn2cmp(upn->data, upnt->data, upn->len, upnt->len) < 0) {
 
-        if (*p == sentinel) {
-            break;
-        }
+                if (temp->left == sentinel) {
+                    temp->left = node;
+                    break;
+                }
 
-        temp = *p;
+                temp = temp->left;
+
+            } else {
+
+                if (temp->right == sentinel) {
+                    temp->right = node;
+                    break;
+                }
+
+                temp = temp->right;
+            }
+        }
     }
-
-    *p = node;
+    
     node->parent = temp;
     node->left = sentinel;
     node->right = sentinel;
