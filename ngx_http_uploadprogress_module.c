@@ -675,7 +675,7 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
 /*
  There are 4 possibilities
    * request not yet started: found = false
-   * request in error:        err_status >= NGX_HTTP_SPECIAL_RESPONSE
+   * request in error:        err_status >= NGX_HTTP_BAD_REQUEST
    * request finished:        done = true
    * request not yet started but registered:        length==0 && rest ==0
    * reauest in progress:     rest > 0 
@@ -683,7 +683,7 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
 
     if (!found) {
         state = uploadprogress_state_starting;
-    } else if (err_status >= NGX_HTTP_SPECIAL_RESPONSE) {
+    } else if (err_status >= NGX_HTTP_BAD_REQUEST) {
         state = uploadprogress_state_error;
     } else if (done) {
         state = uploadprogress_state_done;
