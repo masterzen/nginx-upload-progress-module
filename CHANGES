@@ -1,3 +1,11 @@
+nginx_upload_progress release 0.8.3                              11 Sep 2011
+
+ * HTTP redirects (ie 3xx range) shouldn't be reported as an error (thanks to 
+ Pierre-Yves Kerembellec)
+ 
+ * Fix a double remove in the rb tree due to an uninitialized flag (thanks to 
+ Theo Cushion)
+
 nginx_upload_progress release 0.8.2                              07 Nov 2010
 
  * Session ID query string parameter name is now configurable (thanks to 

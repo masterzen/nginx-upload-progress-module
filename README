@@ -15,7 +15,7 @@ It works because Nginx acts as an accelerator of an upstream server, storing upl
 on disk, before transmitting it to the upstream server. Each individual POST upload request
 should contain a progress unique identifier.
 
-This module is Copyright (c) 2007,2008 Brice Figureau, and is licensed under the BSD license (see LICENSE).
+This module is Copyright (c) 2007-2011 Brice Figureau, and is licensed under the BSD license (see LICENSE).
  * rbtree and shm_zone code is based on Igor Sysoev limit_zone Nginx module.
  * expire header code is based on Igor Sysoev header_filter Nginx module.
 
@@ -30,7 +30,7 @@ WARNING:
 Installation
 ============
 
-nginx_uploadprogress_module has been tested with Nginx 0.6.1, 0.6.12, 0.6.13 and 0.6.30.
+nginx_uploadprogress_module has been tested with Nginx 0.6.x, 0.7.x, 0.8.x and 1.0.x.
 
 Download the Nginx sources from http://nginx.net/ and unpack it.
 
