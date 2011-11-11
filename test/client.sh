@@ -1,5 +1,5 @@
 #!/bin/sh
-# usqge: client.sh UPLOAD_ID PROGRESS_URL
+# usage: client.sh UPLOAD_ID PROGRESS_URL
 cont=""
 while [ "$cont" != "new Object({ 'state' : 'done' })" ]
 do
