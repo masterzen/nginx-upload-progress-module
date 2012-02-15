@@ -1442,12 +1442,6 @@ ngx_http_track_uploads(ngx_conf_t * cf, ngx_command_t * cmd, void *conf)
         return NGX_CONF_ERROR;
     }
 
-    if (lzcf->timeout == NGX_PARSE_LARGE_TIME) {
-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-                           "track_uploads \"%V\" timeout value must be less than 68 years", &value[1]);
-        return NGX_CONF_ERROR;
-    }
-
     clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
     lzcf->handler = clcf->handler;
     if ( lzcf->handler == NULL )
