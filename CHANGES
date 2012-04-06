@@ -1,3 +1,13 @@
+nginx_upload_progress release 0.9.0                              06 Apr 2012
+
+ * INCOMPATIBLE CHANGE: JSONP is now the default output for nginx upload
+ progress module. To restore the old behavior, add:
+    upload_progress_java_output
+ to your nginx configuration (thanks to drewbuschhorn for this work).
+ 
+ * Add instructions in the README on how to use this module with JQuery
+ AJAX.
+
 nginx_upload_progress release 0.8.4                              24 Feb 2012
 
  * Fix compatibility with nginx 1.1.15

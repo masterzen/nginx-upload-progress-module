@@ -15,7 +15,7 @@ It works because Nginx acts as an accelerator of an upstream server, storing upl
 on disk, before transmitting it to the upstream server. Each individual POST upload request
 should contain a progress unique identifier.
 
-This module is Copyright (c) 2007-2011 Brice Figureau, and is licensed under the BSD license (see LICENSE).
+This module is Copyright (c) 2007-2012 Brice Figureau, and is licensed under the BSD license (see LICENSE).
  * rbtree and shm_zone code is based on Igor Sysoev limit_zone Nginx module.
  * expire header code is based on Igor Sysoev header_filter Nginx module.
 
@@ -25,6 +25,16 @@ http://blog.lighttpd.net/articles/2006/08/01/mod_uploadprogress-is-back
 
 WARNING: 
  * when compiled with --with-debug, this module will produce high number of log messages.
+
+INCOMPATIBLE CHANGES
+====================
+
+v0.9.0:
+
+JSONP is now the default output of the progress probes. If you rely on this module serving
+the deprecated java output use:
+     upload_progress_java_output
+in the progress probe location.
 
 
 Installation
@@ -150,7 +160,7 @@ upload_progress_json_output
     This directive sets everything to output as pure json.
 
 upload_progress_jsonp_output
-+++++++++++++++++++++++++++
+++++++++++++++++++++++++++++
     :Syntax: upload_progress_jsonp_output
     :Default: N/A
     :Context: location
