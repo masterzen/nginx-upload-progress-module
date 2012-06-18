@@ -8,7 +8,6 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
-#include <string.h>
 
 #define TIMER_FREQUENCY 15 * 1000
 
