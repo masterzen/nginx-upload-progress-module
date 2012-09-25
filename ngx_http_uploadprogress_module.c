@@ -916,8 +916,8 @@ ngx_http_reportuploads_handler(ngx_http_request_t * r)
                 r->headers_out.content_length_n += b->last - b->pos;
 
                 p1 = p2 + 1;
-                offs += len + 1;
             }
+            offs += len + 1;
         }
         ngx_free(id);
         if(!p_chain_end) // Malformed id
