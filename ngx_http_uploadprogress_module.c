@@ -1616,6 +1616,7 @@ ngx_http_uploadprogress_create_loc_conf(ngx_conf_t * cf)
         elt->values = NULL;
         elt->lengths = NULL;
     } 
+    conf->udp_socket = -1;
 
     return conf;
 }
