@@ -32,6 +32,7 @@ struct ngx_http_uploadprogress_node_s {
     off_t                            rest;
     off_t                            length;
     ngx_uint_t                       done;
+    ngx_uint_t                       sequence;
     time_t                           timeout;
     struct ngx_http_uploadprogress_node_s *prev;
     struct ngx_http_uploadprogress_node_s *next;
@@ -67,6 +68,9 @@ typedef struct {
     ngx_array_t                      templates;
     ngx_str_t                        header;
     ngx_str_t                        header_mul;
+
+    ngx_addr_t                       progress_server;
+    int                              udp_socket;
 
     ngx_str_t                        jsonp_parameter;
     ngx_int_t                        json_multiple:1;
@@ -104,6 +108,7 @@ static char* ngx_http_upload_progress_java_output(ngx_conf_t * cf, ngx_command_t
 static char* ngx_http_upload_progress_json_output(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
 static char* ngx_http_upload_progress_jsonp_output(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
 static char* ngx_http_upload_progress_json_multiple_output(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
+static char* ngx_http_upload_progress_jsonp_multiple_output(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
 static void ngx_clean_old_connections(ngx_event_t * ev);
 static ngx_int_t ngx_http_uploadprogress_content_handler(ngx_http_request_t *r);
 
@@ -119,7 +124,7 @@ static ngx_command_t ngx_http_uploadprogress_commands[] = {
      NULL},
 
     {ngx_string("track_uploads"),
-     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE2,
+     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE2 | NGX_CONF_TAKE3,
      ngx_http_track_uploads,
      NGX_HTTP_LOC_CONF_OFFSET,
      0,
@@ -170,6 +175,13 @@ static ngx_command_t ngx_http_uploadprogress_commands[] = {
     {ngx_string("upload_progress_json_multiple_output"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS,
      ngx_http_upload_progress_json_multiple_output,
+     NGX_HTTP_LOC_CONF_OFFSET,
+     0,
+     NULL},
+
+    {ngx_string("upload_progress_jsonp_multiple_output"),
+     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS,
+     ngx_http_upload_progress_jsonp_multiple_output,
      NGX_HTTP_LOC_CONF_OFFSET,
      0,
      NULL},
@@ -291,6 +303,13 @@ static ngx_str_t ngx_http_uploadprogress_json_multiple_defaults[] = {
     ngx_string("{ \"id\" : $uploadprogress_id, \"state\" : \"error\", \"status\" : $uploadprogress_status }"),
     ngx_string("{ \"id\" : $uploadprogress_id, \"state\" : \"done\" }"),
     ngx_string("{ \"id\" : $uploadprogress_id, \"state\" : \"uploading\", \"received\" : $uploadprogress_received, \"size\" : $uploadprogress_length }")
+};
+
+static ngx_str_t ngx_http_uploadprogress_jsonp_multiple_defaults[] = {
+    ngx_string("$uploadprogress_callback({ \"id\" : $uploadprogress_id, \"state\" : \"starting\" });\r\n"),
+    ngx_string("$uploadprogress_callback({ \"id\" : $uploadprogress_id, \"state\" : \"error\", \"status\" : $uploadprogress_status });\r\n"),
+    ngx_string("$uploadprogress_callback({ \"id\" : $uploadprogress_id, \"state\" : \"done\" });\r\n"),
+    ngx_string("$uploadprogress_callback({ \"id\" : $uploadprogress_id, \"state\" : \"uploading\", \"received\" : $uploadprogress_received, \"size\" : $uploadprogress_length });\r\n")
 };
 
 
@@ -644,6 +663,15 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
         up->rest = r->request_body->rest;
         if(up->length == 0)
             up->length = r->headers_in.content_length_n;
+        if(upcf->udp_socket != -1 && upcf->progress_server.socklen != 0)
+        {
+            u_char      datagram_buf[1024];
+            u_char *    end;
+
+            end = ngx_snprintf(datagram_buf, sizeof(datagram_buf), "{\"id\" : \"%V\", \"sequence\", \"size\" : %u, \"uploaded\" : %u}", id, up->sequence, up->length, up->rest);
+            sendto(upcf->udp_socket, datagram_buf, end - datagram_buf, 0, (struct sockaddr*)upcf->progress_server.sockaddr, upcf->progress_server.socklen);
+            ++up->sequence;
+        }
         ngx_log_debug3(NGX_LOG_DEBUG_HTTP, ngx_cycle->log, 0,
                        "upload-progress: read_event_handler storing rest %uO/%uO for %V", up->rest, up->length, id);
     } else {
@@ -1155,6 +1183,7 @@ ngx_http_uploadprogress_handler(ngx_http_request_t * r)
     up->rest = 0;
     up->length = 0;
     up->timeout = 0;
+    up->sequence = 0;
 
     up->next = ctx->list_head.next;
     up->next->prev = up;
@@ -1495,6 +1524,7 @@ ngx_http_uploadprogress_errortracker(ngx_http_request_t * r)
         up->rest = 0;
         up->length = 0;
         up->timeout = 0;
+        up->sequence = 0;
 
         ngx_memcpy(up->data, id->data, id->len);
 
@@ -1746,6 +1776,7 @@ ngx_http_track_uploads(ngx_conf_t * cf, ngx_command_t * cmd, void *conf)
     ngx_http_core_loc_conf_t        *clcf;
     ngx_http_uploadprogress_conf_t  *lzcf = conf;
     ngx_str_t                       *value;
+    ngx_url_t                       url;
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, cf->log, 0, "ngx_track_uploads in");
 
@@ -1770,8 +1801,25 @@ ngx_http_track_uploads(ngx_conf_t * cf, ngx_command_t * cmd, void *conf)
     lzcf->timeout = ngx_parse_time(&value[2], 1);
     if (lzcf->timeout == NGX_ERROR) {
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-                           "track_uploads \"%V\" timeout value invalid", &value[1]);
+                           "track_uploads \"%V\" timeout value invalid", &value[2]);
         return NGX_CONF_ERROR;
+    }
+
+    if(cf->args->nelts > 3)
+    {
+        ngx_memzero(&url, sizeof(ngx_url_t));
+        url.url = value[3];
+        url.default_port = 80;
+        url.no_resolve = 0;
+
+        if(ngx_parse_url(cf->pool, &url) != NGX_OK)
+        {
+            ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "Invalid graphite server %V: %s", &url.host, url.err);
+            return NGX_CONF_ERROR;
+        }
+        lzcf->progress_server = url.addrs[0];
+        if(lzcf->udp_socket == -1)
+            lzcf->udp_socket = ngx_socket(PF_INET, SOCK_DGRAM, 0);
     }
 
     clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
@@ -1969,6 +2017,32 @@ ngx_http_upload_progress_json_multiple_output(ngx_conf_t * cf, ngx_command_t * c
 
     for(i = 0;i < upcf->templates.nelts;i++) {
         rc = ngx_http_upload_progress_set_template(cf, t + i, ngx_http_uploadprogress_json_multiple_defaults + i);
+
+        if(rc != NGX_CONF_OK) {
+            return rc;
+        }
+    }
+
+    upcf->content_type.data = (u_char*)"application/json";
+    upcf->content_type.len = sizeof("application/json") - 1;
+
+    return NGX_CONF_OK;
+}
+
+static char*
+ngx_http_upload_progress_jsonp_multiple_output(ngx_conf_t * cf, ngx_command_t * cmd, void *conf)
+{
+    ngx_http_uploadprogress_conf_t       *upcf = conf;
+    ngx_http_uploadprogress_template_t   *t;
+    ngx_uint_t                            i;
+    char*                                 rc;
+
+    upcf->json_multiple = 1;
+
+    t = (ngx_http_uploadprogress_template_t*)upcf->templates.elts;
+
+    for(i = 0;i < upcf->templates.nelts;i++) {
+        rc = ngx_http_upload_progress_set_template(cf, t + i, ngx_http_uploadprogress_jsonp_multiple_defaults + i);
 
         if(rc != NGX_CONF_OK) {
             return rc;
