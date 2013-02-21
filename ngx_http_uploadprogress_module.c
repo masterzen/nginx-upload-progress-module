@@ -33,6 +33,7 @@ struct ngx_http_uploadprogress_node_s {
     off_t                            length;
     ngx_uint_t                       done;
     ngx_uint_t                       sequence;
+    ngx_uint_t                       sent_portion;
     time_t                           timeout;
     struct ngx_http_uploadprogress_node_s *prev;
     struct ngx_http_uploadprogress_node_s *next;
@@ -667,10 +668,22 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
         {
             u_char      datagram_buf[1024];
             u_char *    end;
+            off_t       uploaded;
+            ngx_uint_t  portion;
 
-            end = ngx_snprintf(datagram_buf, sizeof(datagram_buf), "{\"id\" : \"%V\", \"sequence\", \"size\" : %u, \"uploaded\" : %u}", id, up->sequence, up->length, up->rest);
-            sendto(upcf->udp_socket, datagram_buf, end - datagram_buf, 0, (struct sockaddr*)upcf->progress_server.sockaddr, upcf->progress_server.socklen);
-            ++up->sequence;
+            uploaded = up->length - up->rest;
+            if(up->length)
+                portion = 100 * uploaded / up->length;
+            else
+                portion = 100;
+            if(portion > up->sent_portion)
+            {
+                end = ngx_snprintf(datagram_buf, sizeof(datagram_buf), "{\"id\" : \"%V\", \"sequence\" : %d, \"size\" : %uO, \"uploaded\" : %uO }",
+                                   id, up->sequence, up->length, uploaded);
+                sendto(upcf->udp_socket, datagram_buf, end - datagram_buf, 0, (struct sockaddr*)upcf->progress_server.sockaddr, upcf->progress_server.socklen);
+                up->sent_portion = portion;
+                ++up->sequence;
+            }
         }
         ngx_log_debug3(NGX_LOG_DEBUG_HTTP, ngx_cycle->log, 0,
                        "upload-progress: read_event_handler storing rest %uO/%uO for %V", up->rest, up->length, id);
@@ -1184,6 +1197,7 @@ ngx_http_uploadprogress_handler(ngx_http_request_t * r)
     up->length = 0;
     up->timeout = 0;
     up->sequence = 0;
+    up->sent_portion = 0;
 
     up->next = ctx->list_head.next;
     up->next->prev = up;
@@ -1525,6 +1539,7 @@ ngx_http_uploadprogress_errortracker(ngx_http_request_t * r)
         up->length = 0;
         up->timeout = 0;
         up->sequence = 0;
+        up->sent_portion = 0;
 
         ngx_memcpy(up->data, id->data, id->len);
 
