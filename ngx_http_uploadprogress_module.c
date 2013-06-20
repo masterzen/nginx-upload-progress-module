@@ -833,8 +833,8 @@ ngx_http_uploadprogress_handler(ngx_http_request_t * r)
     up->length = 0;
     up->timeout = 0;
 
-    // Properly handles small files where no read events happen after the
-    // request is first handled
+    /* Properly handles small files where no read events happen after the */
+    /* request is first handled (apparently this can happen on linux with epoll) */
     if (r->headers_in.content_length_n) {
         up->length = r->headers_in.content_length_n;
         if (r->request_body) {
