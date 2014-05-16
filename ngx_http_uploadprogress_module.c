@@ -462,6 +462,9 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
     ngx_http_uploadprogress_node_t              *up;
     ngx_http_uploadprogress_conf_t              *upcf;
     ngx_http_uploadprogress_module_ctx_t        *module_ctx;
+    size_t                                       size;
+    off_t                                        rest;
+    
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "upload-progress: ngx_http_uploadprogress_event_handler");
     
@@ -517,7 +520,15 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
     if (up != NULL && !up->done) {
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, ngx_cycle->log, 0,
                        "upload-progress: read_event_handler found node: %V", id);
-        up->rest = r->request_body->rest;
+        rest = r->request_body->rest;
+        size = r->request_body->buf->last - r->request_body->buf->pos;
+        if ((off_t) size < rest) {
+            rest -= size;
+        } else {
+            rest = 0;
+        }
+        
+        up->rest = rest;
         if(up->length == 0)
             up->length = r->headers_in.content_length_n;
         ngx_log_debug3(NGX_LOG_DEBUG_HTTP, ngx_cycle->log, 0,
