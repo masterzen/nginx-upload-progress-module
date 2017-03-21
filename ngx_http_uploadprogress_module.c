@@ -1,4 +1,3 @@
-
 /*
  * Copyright (C) 2007 Brice Figureau
  * shm_zone and rbtree code Copyright (c) 2002-2007 Igor Sysoev
@@ -9,6 +8,11 @@
 #include <ngx_http.h>
 
 #define TIMER_FREQUENCY 15 * 1000
+
+/* NGX_PARSE_LARGE_TIME was removed in  1.1.15 */
+#ifndef NGX_PARSE_LARGE_TIME
+    #define NGX_PARSE_LARGE_TIME -2
+#endif /* NGX_PARSE_LARGE_TIME */
 
 typedef enum {
     uploadprogress_state_starting = 0,
