@@ -371,36 +371,32 @@ find_node(ngx_str_t * id, ngx_http_uploadprogress_ctx_t * ctx, ngx_log_t * log)
     sentinel = ctx->rbtree->sentinel;
 
     while (node != sentinel) {
-
-        if (hash < node->key) {
-            node = node->left;
-            continue;
-        }
-
-        if (hash > node->key) {
-            node = node->right;
+        if (hash != node->key) {
+            node = (hash < node->key) ? node->left : node->right;
             continue;
         }
 
         /* hash == node->key */
+        up = (ngx_http_uploadprogress_node_t *) node;
 
-        do {
-            up = (ngx_http_uploadprogress_node_t *) node;
-
-            rc = ngx_memn2cmp(id->data, up->data, id->len, (size_t) up->len);
-
-            if (rc == 0) {
-                ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0,
-                               "upload-progress: found node");
-                return up;
-            }
-
-            node = (rc < 0) ? node->left : node->right;
-
-        } while (node != sentinel && hash == node->key);
+        rc = ngx_memn2cmp(id->data, up->data, id->len, up->len);
 
         /* found a key with unmatching hash (and value), let's keep comparing hashes then */
+        if (rc < 0) {
+          node = node->left;
+          continue;
+        }
+
+        if (rc > 0) {
+          node = node->right;
+          continue;
+        }
+
+        /* found the hash */
+        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0, "upload-progress: found node");
+        return up;
     }
+
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0, "upload-progress: can't find node");
     return NULL;
 }
@@ -458,6 +454,7 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
     ngx_str_t                                   *id, *oldid;
     ngx_slab_pool_t                             *shpool;
     ngx_shm_zone_t                              *shm_zone;
+    ngx_http_request_body_t                     *rb;
     ngx_http_uploadprogress_ctx_t               *ctx;
     ngx_http_uploadprogress_node_t              *up;
     ngx_http_uploadprogress_conf_t              *upcf;
@@ -465,6 +462,8 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
     size_t                                       size;
     off_t                                        rest;
     
+
+    rb = r->request_body;
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "upload-progress: ngx_http_uploadprogress_event_handler");
     
@@ -520,15 +519,25 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
     if (up != NULL && !up->done) {
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, ngx_cycle->log, 0,
                        "upload-progress: read_event_handler found node: %V", id);
-        rest = r->request_body->rest;
-        size = r->request_body->buf->last - r->request_body->buf->pos;
-        if ((off_t) size < rest) {
-            rest -= size;
-        } else {
-            rest = 0;
+
+        #if (NGX_HTTP_V2)
+        if (r->http_connection->addr_conf->http2) { /* http/2 */
+            up->rest = up->length - r->request_length;
+        } else { /* http/1 */
+        #endif
+            rest = rb->rest;
+            size = rb->buf->last - rb->buf->pos;
+            if ((off_t) size < rest) {
+                rest -= size;
+            } else {
+                rest = 0;
+            }
+            up->rest = rest;
+
+        #if (NGX_HTTP_V2)
         }
+        #endif
         
-        up->rest = rest;
         if(up->length == 0)
             up->length = r->headers_in.content_length_n;
         ngx_log_debug3(NGX_LOG_DEBUG_HTTP, ngx_cycle->log, 0,
@@ -1091,11 +1100,7 @@ ngx_http_uploadprogress_init_zone(ngx_shm_zone_t * shm_zone, void *data)
         return NGX_ERROR;
     }
 
-    ngx_rbtree_sentinel_init(sentinel);
-
-    ctx->rbtree->root = sentinel;
-    ctx->rbtree->sentinel = sentinel;
-    ctx->rbtree->insert = ngx_http_uploadprogress_rbtree_insert_value;
+    ngx_rbtree_init(ctx->rbtree, sentinel, ngx_http_uploadprogress_rbtree_insert_value);
 
     return NGX_OK;
 }
