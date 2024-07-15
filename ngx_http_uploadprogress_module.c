@@ -489,6 +489,16 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
     module_ctx = ngx_http_get_module_ctx(r, ngx_http_uploadprogress_module);
     if (module_ctx != NULL ) {
         module_ctx->read_event_handler(r);
+        /*
+         * Both ngx_http_v2_read_request_body() and
+         * ngx_http_v2_process_request_body() modify read_event_handler,
+         * we respect the change, but re-interpose our function so we still get
+         * future events, otherwise we miss all upload progress.
+         */
+        if (r->read_event_handler != ngx_http_uploadprogress_event_handler) {
+            module_ctx->read_event_handler = r->read_event_handler;
+            r->read_event_handler = ngx_http_uploadprogress_event_handler;
+        }
     }
 
     /* at this stage, r is not anymore safe to use */
