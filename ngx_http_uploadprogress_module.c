@@ -1455,7 +1455,7 @@ ngx_http_track_uploads(ngx_conf_t * cf, ngx_command_t * cmd, void *conf)
     lzcf->timeout = ngx_parse_time(&value[2], 1);
     if (lzcf->timeout == NGX_ERROR) {
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-            "track_uploads \"%V\" timeout value invalid", &value[1]);
+            "track_uploads \"%V\" timeout value invalid", &value[2]);
         return NGX_CONF_ERROR;
     }
 
