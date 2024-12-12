@@ -311,18 +311,17 @@ static ngx_str_t ngx_http_uploadprogress_jsonp_multiple_defaults[] = {
 static ngx_array_t ngx_http_uploadprogress_global_templates;
 
 static ngx_str_t*
-get_tracking_id(ngx_http_request_t * r)
+get_tracking_id_internal(ngx_http_request_t *r, ngx_str_t *header_ref, const char *caller, bool multi)
 {
     u_char                          *p, *start_p;
     ngx_uint_t                       i;
     ngx_list_part_t                 *part;
     ngx_table_elt_t                 *header;
     ngx_str_t                       *ret, args;
-    ngx_http_uploadprogress_conf_t  *upcf;
 
-    upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
+    (void)multi;
 
-    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "upload-progress: get_tracking_id");
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "upload-progress: %s", caller);
 
     part = &r->headers_in.headers.part;
     header = part->elts;
@@ -340,19 +339,19 @@ get_tracking_id(ngx_http_request_t * r)
         }
 
         if (
-            header[i].key.len == upcf->header.len &&
-            ngx_strncasecmp(header[i].key.data, upcf->header.data, header[i].key.len) == 0
+            header[i].key.len == header_ref->len &&
+            ngx_strncasecmp(header[i].key.data, header_ref->data, header[i].key.len) == 0
         ) {
             ret = ngx_calloc(sizeof(ngx_str_t), r->connection->log );
             *ret = header[i].value;
             ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                "upload-progress: get_tracking_id found header: %V", ret);
+                "upload-progress: %s: found header: %V", caller, ret);
             return ret;
         }
     }
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-        "upload-progress: get_tracking_id no header found");
+        "upload-progress: %s: no header found", caller);
 
     /* not found, check as a request arg */
     /* it is possible the request args have not been yet created (or already released) */
@@ -361,18 +360,18 @@ get_tracking_id(ngx_http_request_t * r)
 
     if (args.len && args.data) {
         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-            "upload-progress: get_tracking_id no header found, args found");
+            "upload-progress: %s: no header found, args found", caller);
         i = 0;
         p = args.data;
         do {
             ngx_uint_t len = args.len - (p - args.data);
             if (
-                len >= (upcf->header.len + 1) &&
-                ngx_strncasecmp(p, upcf->header.data, upcf->header.len) == 0 &&
-                p[upcf->header.len] == '='
+                len >= (header_ref->len + 1) &&
+                ngx_strncasecmp(p, header_ref->data, header_ref->len) == 0 &&
+                p[header_ref->len] == '='
             ) {
                 ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                    "upload-progress: get_tracking_id found args: %s",p);
+                    "upload-progress: %s: found args: %s", caller, p);
                 i = 1;
                 break;
             }
@@ -380,7 +379,7 @@ get_tracking_id(ngx_http_request_t * r)
         } while (len > 0);
 
         if (i) {
-            start_p = p += upcf->header.len + 1;
+            start_p = p += header_ref->len + 1;
             while (p < args.data + args.len) {
                 if (*(++p) == '&') {
                     break;
@@ -391,105 +390,34 @@ get_tracking_id(ngx_http_request_t * r)
             ret->data = start_p;
             ret->len = p - start_p;
             ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                "upload-progress: get_tracking_id found args: %V",ret);
+                "upload-progress: %s: found args: %V", caller, ret);
             return ret;
         }
     }
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-        "upload-progress: get_tracking_id no id found");
+        "upload-progress: %s: no id found", caller);
     return NULL;
 }
 
 static ngx_str_t*
-get_tracking_ids_mul(ngx_http_request_t * r)
+get_tracking_id(ngx_http_request_t *r)
 {
-    u_char                          *p, *start_p;
-    ngx_uint_t                       i;
-    ngx_list_part_t                 *part;
-    ngx_table_elt_t                 *header;
-    ngx_str_t                       *ret, args;
-    ngx_http_uploadprogress_conf_t  *upcf;
+    ngx_http_uploadprogress_conf_t *upcf;
 
     upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
 
-    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "upload-progress: get_tracking_ids");
+    return get_tracking_id_internal(r, &upcf->header, "get_tracking_id", false);
+}
 
-    part = &r->headers_in.headers.part;
-    header = part->elts;
+static ngx_str_t*
+get_tracking_ids_mul(ngx_http_request_t *r)
+{
+    ngx_http_uploadprogress_conf_t *upcf;
 
-    for (i = 0; /* void */; i++) {
+    upcf = ngx_http_get_module_loc_conf(r, ngx_http_uploadprogress_module);
 
-        if (i >= part->nelts) {
-            if (part->next == NULL) {
-                break;
-            }
-
-            part = part->next;
-            header = part->elts;
-            i = 0;
-        }
-
-        if (
-            header[i].key.len == upcf->header_mul.len &&
-            ngx_strncasecmp(header[i].key.data, upcf->header_mul.data, header[i].key.len) == 0
-        ) {
-            ret = ngx_calloc(sizeof(ngx_str_t), r->connection->log);
-            *ret = header[i].value;
-            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                "upload-progress: get_tracking_ids found header: %V", ret);
-            return ret;
-        }
-    }
-
-    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-        "upload-progress: get_tracking_ids no header found");
-
-    /* not found, check as a request arg */
-    /* it is possible the request args have not been yet created (or already released) */
-    /* so let's try harder first from the request line */
-    args = r->args;
-
-    if (args.len && args.data) {
-        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-            "upload-progress: get_tracking_id no header found, args found");
-        i = 0;
-        p = args.data;
-        do {
-            ngx_uint_t len = args.len - (p - args.data);
-            if (
-                len >= (upcf->header_mul.len + 1) &&
-                ngx_strncasecmp(p, upcf->header_mul.data, upcf->header_mul.len) == 0 &&
-                p[upcf->header_mul.len] == '='
-            ) {
-                ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                    "upload-progress: get_tracking_id found args: %s",p);
-                i = 1;
-                break;
-            }
-            p++;
-        } while (len > 0);
-
-        if (i) {
-            start_p = p += upcf->header_mul.len + 1;
-            while (p < args.data + args.len) {
-                if (*(++p) == '&') {
-                    break;
-                }
-            }
-
-            ret = ngx_calloc(sizeof(ngx_str_t), r->connection->log);
-            ret->data = start_p;
-            ret->len = p - start_p;
-            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                "upload-progress: get_tracking_id found args: %V",ret);
-            return ret;
-        }
-    }
-
-    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-        "upload-progress: get_tracking_id no id found");
-    return NULL;
+    return get_tracking_id_internal(r, &upcf->header_mul, "get_tracking_ids_mul", true);
 }
 
 static ngx_http_uploadprogress_node_t *
