@@ -376,10 +376,8 @@ get_tracking_id(ngx_http_request_t * r)
                 i = 1;
                 break;
             }
-            else if (!len) {
-                break;
-            }
-        } while (p++);
+            p++;
+        } while (len > 0);
 
         if (i) {
             start_p = p += upcf->header.len + 1;
@@ -469,10 +467,8 @@ get_tracking_ids_mul(ngx_http_request_t * r)
                 i = 1;
                 break;
             }
-            else if (!len) {
-                break;
-            }
-        } while (p++);
+            p++;
+        } while (len > 0);
 
         if (i) {
             start_p = p += upcf->header_mul.len + 1;
