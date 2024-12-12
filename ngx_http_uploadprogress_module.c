@@ -99,11 +99,17 @@ static char *ngx_http_track_uploads(ngx_conf_t * cf, ngx_command_t * cmd, void *
 static char *ngx_http_report_uploads(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
 static char *ngx_http_upload_progress(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
 static char* ngx_http_upload_progress_template(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
-static char* ngx_http_upload_progress_java_output(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
-static char* ngx_http_upload_progress_json_output(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
-static char* ngx_http_upload_progress_jsonp_output(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
-static char* ngx_http_upload_progress_json_multiple_output(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
-static char* ngx_http_upload_progress_jsonp_multiple_output(ngx_conf_t * cf, ngx_command_t * cmd, void *conf);
+
+static char *ngx_http_upload_progress_output_internal(
+    ngx_conf_t *cf, ngx_command_t *cmd, void *conf, ngx_uint_t multi,
+    ngx_str_t content_type, ngx_str_t *templates
+);
+static char *ngx_http_upload_progress_java_output(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static char *ngx_http_upload_progress_json_output(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static char *ngx_http_upload_progress_jsonp_output(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static char *ngx_http_upload_progress_json_multiple_output(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static char *ngx_http_upload_progress_jsonp_multiple_output(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+
 static void ngx_clean_old_connections(ngx_event_t * ev);
 static ngx_int_t ngx_http_uploadprogress_content_handler(ngx_http_request_t *r);
 
@@ -1831,133 +1837,74 @@ ngx_http_upload_progress_template(ngx_conf_t * cf, ngx_command_t * cmd, void *co
 }
 
 static char*
-ngx_http_upload_progress_java_output(ngx_conf_t * cf, ngx_command_t * cmd, void *conf)
-{
+ngx_http_upload_progress_output_internal(
+    ngx_conf_t *cf, ngx_command_t *cmd, void *conf, ngx_uint_t multi,
+    ngx_str_t content_type, ngx_str_t *templates
+) {
     ngx_http_uploadprogress_conf_t       *upcf = conf;
     ngx_http_uploadprogress_template_t   *t;
     ngx_uint_t                            i;
     char*                                 rc;
 
-    upcf->json_multiple = 0;
+    upcf->json_multiple = multi;
 
     t = (ngx_http_uploadprogress_template_t*)upcf->templates.elts;
 
     for (i = 0; i < upcf->templates.nelts; i++) {
-        rc = ngx_http_upload_progress_set_template(
-            cf, t + i, ngx_http_uploadprogress_java_defaults + i);
-
+        rc = ngx_http_upload_progress_set_template(cf, t + i, templates + i);
         if (rc != NGX_CONF_OK) {
             return rc;
         }
     }
 
-    upcf->content_type = (ngx_str_t)ngx_string("text/javascript");
+    upcf->content_type = content_type;
 
     return NGX_CONF_OK;
 }
 
 static char*
-ngx_http_upload_progress_json_output(ngx_conf_t * cf, ngx_command_t * cmd, void *conf)
+ngx_http_upload_progress_java_output(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
-    ngx_http_uploadprogress_conf_t       *upcf = conf;
-    ngx_http_uploadprogress_template_t   *t;
-    ngx_uint_t                            i;
-    char*                                 rc;
-
-    upcf->json_multiple = 0;
-
-    t = (ngx_http_uploadprogress_template_t*)upcf->templates.elts;
-
-    for (i = 0; i < upcf->templates.nelts; i++) {
-        rc = ngx_http_upload_progress_set_template(
-            cf, t + i, ngx_http_uploadprogress_json_defaults + i);
-
-        if (rc != NGX_CONF_OK) {
-            return rc;
-        }
-    }
-
-    upcf->content_type = (ngx_str_t)ngx_string("application/json");
-
-    return NGX_CONF_OK;
+    return ngx_http_upload_progress_output_internal(
+        cf, cmd, conf, 0,
+        (ngx_str_t)ngx_string("text/javascript"),
+        ngx_http_uploadprogress_java_defaults);
 }
 
 static char*
-ngx_http_upload_progress_jsonp_output(ngx_conf_t * cf, ngx_command_t * cmd, void *conf)
+ngx_http_upload_progress_json_output(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
-    ngx_http_uploadprogress_conf_t       *upcf = conf;
-    ngx_http_uploadprogress_template_t   *t;
-    ngx_uint_t                            i;
-    char*                                 rc;
-
-    upcf->json_multiple = 0;
-
-    t = (ngx_http_uploadprogress_template_t*)upcf->templates.elts;
-
-    for (i = 0; i < upcf->templates.nelts; i++) {
-        rc = ngx_http_upload_progress_set_template(
-            cf, t + i, ngx_http_uploadprogress_jsonp_defaults + i);
-
-        if (rc != NGX_CONF_OK) {
-            return rc;
-        }
-    }
-
-    upcf->content_type = (ngx_str_t)ngx_string("application/javascript");
-
-    return NGX_CONF_OK;
+    return ngx_http_upload_progress_output_internal(
+        cf, cmd, conf, 0,
+        (ngx_str_t)ngx_string("application/json"),
+        ngx_http_uploadprogress_json_defaults);
 }
 
 static char*
-ngx_http_upload_progress_json_multiple_output(ngx_conf_t * cf, ngx_command_t * cmd, void *conf)
+ngx_http_upload_progress_jsonp_output(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
-    ngx_http_uploadprogress_conf_t       *upcf = conf;
-    ngx_http_uploadprogress_template_t   *t;
-    ngx_uint_t                            i;
-    char*                                 rc;
-
-    upcf->json_multiple = 1;
-
-    t = (ngx_http_uploadprogress_template_t*)upcf->templates.elts;
-
-    for (i = 0; i < upcf->templates.nelts; i++) {
-        rc = ngx_http_upload_progress_set_template(
-            cf, t + i, ngx_http_uploadprogress_json_multiple_defaults + i);
-
-        if (rc != NGX_CONF_OK) {
-            return rc;
-        }
-    }
-
-    upcf->content_type = (ngx_str_t)ngx_string("application/json");
-
-    return NGX_CONF_OK;
+    return ngx_http_upload_progress_output_internal(
+        cf, cmd, conf, 0,
+        (ngx_str_t)ngx_string("application/javascript"),
+        ngx_http_uploadprogress_jsonp_defaults);
 }
 
 static char*
-ngx_http_upload_progress_jsonp_multiple_output(ngx_conf_t * cf, ngx_command_t * cmd, void *conf)
+ngx_http_upload_progress_json_multiple_output(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
-    ngx_http_uploadprogress_conf_t       *upcf = conf;
-    ngx_http_uploadprogress_template_t   *t;
-    ngx_uint_t                            i;
-    char*                                 rc;
+    return ngx_http_upload_progress_output_internal(
+        cf, cmd, conf, 1,
+        (ngx_str_t)ngx_string("application/json"),
+        ngx_http_uploadprogress_json_multiple_defaults);
+}
 
-    upcf->json_multiple = 1;
-
-    t = (ngx_http_uploadprogress_template_t*)upcf->templates.elts;
-
-    for (i = 0; i < upcf->templates.nelts; i++) {
-        rc = ngx_http_upload_progress_set_template(
-            cf, t + i, ngx_http_uploadprogress_jsonp_multiple_defaults + i);
-
-        if (rc != NGX_CONF_OK) {
-            return rc;
-        }
-    }
-
-    upcf->content_type = (ngx_str_t)ngx_string("application/json");
-
-    return NGX_CONF_OK;
+static char*
+ngx_http_upload_progress_jsonp_multiple_output(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+    return ngx_http_upload_progress_output_internal(
+        cf, cmd, conf, 1,
+        (ngx_str_t)ngx_string("application/json"),
+        ngx_http_uploadprogress_jsonp_multiple_defaults);
 }
 
 static ngx_int_t ngx_http_uploadprogress_received_variable(ngx_http_request_t *r,
