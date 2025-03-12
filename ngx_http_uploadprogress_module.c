@@ -502,9 +502,9 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
 
 
     if (shm_zone == NULL) {
-        ngx_http_uploadprogress_strdupfree(id);
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, ngx_cycle->log, 0,
                        "upload-progress: read_event_handler no shm_zone for id: %V", id);
+        ngx_http_uploadprogress_strdupfree(id);
         return;
     }
 
